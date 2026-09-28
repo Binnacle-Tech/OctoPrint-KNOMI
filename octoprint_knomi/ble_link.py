@@ -71,6 +71,7 @@ class BleLink:
             self._thread.join(timeout=10)
         self._thread = None
         self.state = "off"
+        self.last_error = ""
 
     def request_wifi(self):
         self._wifi_request = True

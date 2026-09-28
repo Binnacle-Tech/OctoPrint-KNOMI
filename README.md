@@ -1,28 +1,37 @@
-# OctoPrint-KNOMI
+# OctoPrint-KNOMI: BTT KNOMI display plugin for OctoPrint
 
-Companion plugin for the **[KNOMI OctoPrint edition firmware](https://github.com/Binnacle-Tech/KNOMI/tree/octoprint)**. It lets the BTT KNOMI display show what an OctoPrint + Klipper (OctoKlipper) printer is doing.
+**OctoPrint plugin for the BigTreeTech KNOMI / KNOMI 2 round display** (the Voron Stealthburner screen). With the **[KNOMI for OctoPrint firmware](https://github.com/Binnacle-Tech/KNOMI)**, it makes the KNOMI show what an OctoPrint printer is doing, including OctoPrint + Klipper (OctoKlipper) setups. Mainsail/Moonraker isn't needed.
 
-## What it does
+<p align="center"><img src="docs/images/knomi-screens.png" alt="KNOMI 2 screens driven by OctoPrint: idle, homing, printing with time left, tinted idle face" width="100%"></p>
 
-- **Status flags** at `GET /api/plugin/knomi`: `homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`. The same data is pushed over OctoPrint's websocket whenever it changes. The flags come from:
-  - commands OctoPrint sends (G28, QUAD_GANTRY_LEVEL, BED_MESH_CALIBRATE, M109/M190, SHAPER_CALIBRATE, PID_CALIBRATE, CLEAN_NOZZLE, LOAD/UNLOAD_FILAMENT, PAUSE/RESUME, M600, and so on). Each flag is raised when the command is sent and cleared on its `ok`.
-  - `// KNOMI <flag>=<0|1>` lines from Klipper macros, so steps inside `PRINT_START` show up too. See [`knomi_octoprint.cfg`](knomi_octoprint.cfg).
-  - `// action:paused` / `// action:resumed` lines.
-- **Bluetooth LE link** (optional). The plugin connects to the KNOMI, pushes status and the file list, and runs the KNOMI's buttons inside OctoPrint. It needs no API key, and the KNOMI can keep its WiFi off while the link is up.
+> [!IMPORTANT]
+> **Only tested on a KNOMI 2 with OctoPrint on a Raspberry Pi 5.** Other setups should work but are untested. Reports are welcome.
+
+## What it adds
+
+- **Homing, probing / bed mesh, QGL, input shaper, PID tuning, nozzle cleaning, filament change and pause animations** on the KNOMI, driven by what OctoPrint is actually doing:
+  - commands OctoPrint sends (`G28`, `QUAD_GANTRY_LEVEL`, `BED_MESH_CALIBRATE`, `M109`/`M190`, `SHAPER_CALIBRATE`, `PID_CALIBRATE`, `CLEAN_NOZZLE`, `LOAD_FILAMENT`, `PAUSE`/`M600`, and so on)
+  - `// KNOMI <flag>=1` lines from your Klipper macros, so steps inside `PRINT_START` show up too ([`knomi_octoprint.cfg`](knomi_octoprint.cfg))
+  - `// action:paused` / `// action:resumed`
+- **Instant updates.** Changes are pushed to the KNOMI over OctoPrint's websocket.
+- **Bluetooth LE link (optional).** The plugin connects to the KNOMI 2 directly, pushes status and the file list, and runs the KNOMI's touchscreen buttons inside OctoPrint. No API key, and the KNOMI can even run with WiFi off.
+- No G28 or bed-mesh macro overrides are needed, so it avoids the "Macro G28 called recursively" and KAMP problems of the stock KNOMI macros.
 
 ## Install
 
-OctoPrint → Settings → Plugin Manager → **Get More** → *from URL*:
+OctoPrint → Settings → Plugin Manager → **Get More…** → **…from URL**:
 
 ```
 https://github.com/Binnacle-Tech/OctoPrint-KNOMI/archive/refs/heads/main.zip
 ```
 
-Restart OctoPrint when asked. Bluetooth support pulls in [`bleak`](https://github.com/hbldh/bleak), which is installed automatically.
+Restart OctoPrint when asked, then flash the **[KNOMI for OctoPrint firmware](https://github.com/Binnacle-Tech/KNOMI)** on the KNOMI and set its backend to OctoPrint.
 
-## Bluetooth setup
+<p align="center"><img src="docs/images/octoprint-settings.png" alt="OctoPrint-KNOMI plugin settings: tool, Bluetooth link, KNOMI address, status" width="75%"></p>
 
-1. Turn Bluetooth on in the KNOMI's web settings, then restart the KNOMI.
+## Bluetooth setup (optional)
+
+1. On the KNOMI's web settings, set **Bluetooth → On**, then restart the KNOMI.
 2. Pair once from the Pi. The KNOMI shows a 6-digit code:
    ```
    bluetoothctl
@@ -30,11 +39,19 @@ Restart OctoPrint when asked. Bluetooth support pulls in [`bleak`](https://githu
    pair  <KNOMI address>
    trust <KNOMI address>
    ```
-   If `/boot/config.txt` has `dtoverlay=disable-bt`, remove it and reboot first.
-3. Settings → KNOMI: tick **Connect to the KNOMI over Bluetooth**.
+   If `/boot/config.txt` (or `/boot/firmware/config.txt`) has `dtoverlay=disable-bt`, remove it and reboot first.
+3. OctoPrint → Settings → **KNOMI** → tick **Connect to the KNOMI over Bluetooth**.
 
-Full firmware-side setup is in [OCTOPRINT.md](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md).
+Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Bluetooth drops. The full guide is in [OCTOPRINT.md](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#bluetooth).
+
+## FAQ
+
+**Does the KNOMI need Mainsail or Moonraker with this?** No. With this plugin and firmware, the KNOMI works with OctoPrint alone.
+
+**Does it work with OctoKlipper?** Yes, that's the tested setup: OctoPrint + OctoKlipper on a Raspberry Pi 5.
+
+**What's the API endpoint?** `GET /api/plugin/knomi` returns the status flags (`homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`). Changes are also sent as plugin messages on the websocket.
 
 ## License
 
-AGPL-3.0. See [LICENSE](LICENSE).
+AGPL-3.0, see [LICENSE](LICENSE). Not affiliated with BIGTREETECH.

@@ -6,7 +6,7 @@ $(function () {
 
         self.refresh = function () {
             OctoPrint.simpleApiGet("knomi").done(function (r) {
-                if (!r.ble_state) { self.bleState("Bluetooth off"); return; }
+                if (!r.ble_state || r.ble_state === "off") { self.bleState("Bluetooth off"); return; }
                 var s = r.ble_state;
                 if (r.ble_address) s += " (" + r.ble_address + ")";
                 if (r.ble_error && r.ble_state !== "connected") s += " - " + r.ble_error;
