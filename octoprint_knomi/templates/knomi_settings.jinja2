@@ -1,0 +1,46 @@
+<h3>KNOMI</h3>
+<p>Status for the KNOMI display. Over WiFi the KNOMI reads it from the API. Over Bluetooth this plugin pushes it.</p>
+
+<form class="form-horizontal" onsubmit="return false;">
+  <div class="control-group">
+    <label class="control-label">Tool</label>
+    <div class="controls">
+      <input type="text" class="input-small" data-bind="value: settings.settings.plugins.knomi.tool">
+      <span class="help-block">Temperature shown on the KNOMI over Bluetooth (usually tool0).</span>
+    </div>
+  </div>
+
+  <legend>Bluetooth</legend>
+  <div class="control-group">
+    <div class="controls">
+      <label class="checkbox">
+        <input type="checkbox" data-bind="checked: settings.settings.plugins.knomi.ble_enabled"> Connect to the KNOMI over Bluetooth
+      </label>
+      <span class="help-block">
+        Turn Bluetooth on for the KNOMI on its own settings page first, then pair once from the Pi:
+        <code>bluetoothctl</code>, <code>scan on</code>, <code>pair &lt;KNOMI address&gt;</code>, type the code the KNOMI shows,
+        then <code>trust &lt;address&gt;</code>.
+      </span>
+    </div>
+  </div>
+  <div class="control-group">
+    <label class="control-label">KNOMI address</label>
+    <div class="controls">
+      <input type="text" class="input-medium" placeholder="auto" data-bind="value: settings.settings.plugins.knomi.ble_address">
+      <span class="help-block">Leave empty to find it automatically. It's filled in after the first connection.</span>
+    </div>
+  </div>
+  <div class="control-group">
+    <label class="control-label">Status</label>
+    <div class="controls">
+      <span data-bind="text: bleState"></span>
+      <button class="btn btn-mini" data-bind="click: refresh">Refresh</button>
+    </div>
+  </div>
+  <div class="control-group">
+    <div class="controls">
+      <button class="btn" data-bind="click: wifiOn">Turn KNOMI WiFi on</button>
+      <span class="help-block">If the KNOMI turned its WiFi off for Bluetooth, this brings WiFi back for 10 minutes (e.g. to open its web page).</span>
+    </div>
+  </div>
+</form>

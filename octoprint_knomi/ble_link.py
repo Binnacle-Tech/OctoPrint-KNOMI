@@ -1,0 +1,172 @@
+"""
+Bluetooth LE link to the KNOMI (the KNOMI is the peripheral, the Pi connects).
+
+Runs its own asyncio loop in a daemon thread. While connected it writes a compact
+status JSON to the KNOMI (on change, and at least every 2 s as a heartbeat), sends
+the file list when asked or when files change, and receives the KNOMI's commands
+(Moonraker-style paths, the same strings the KNOMI UI queues) as notifications.
+
+Pairing is done once with bluetoothctl (the KNOMI shows the passkey). After that
+BlueZ reuses the bond automatically.
+"""
+import asyncio
+import json
+import threading
+import time
+
+SERVICE_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000001"
+STATUS_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000002"
+FILES_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000003"
+CMD_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000004"
+
+HEARTBEAT_S = 2.0
+POLL_S = 0.25
+RETRY_S = 5.0
+FILES_MAX = 1023      # KNOMI roller buffer
+FILES_CHUNK = 400
+
+
+def encode_files(paths):
+    """File list -> BLE frames: [flags][utf-8 text], flags 1 = start, 2 = end."""
+    text = ""
+    for p in paths:
+        line = p + "\n"
+        if len((text + line).encode("utf-8")) > FILES_MAX:
+            break
+        text += line
+    data = text.encode("utf-8")
+    chunks = [data[i:i + FILES_CHUNK] for i in range(0, len(data), FILES_CHUNK)] or [b""]
+    frames = []
+    for i, c in enumerate(chunks):
+        flags = (1 if i == 0 else 0) | (2 if i == len(chunks) - 1 else 0)
+        frames.append(bytes([flags]) + c)
+    return frames
+
+
+class BleLink:
+    def __init__(self, plugin, logger):
+        self._plugin = plugin
+        self._logger = logger
+        self._thread = None
+        self._stop = threading.Event()
+        self._wifi_request = False
+        self._files_dirty = True
+        self.state = "off"
+        self.address = ""
+        self.last_error = ""
+
+    # ---- control (any thread) ----------------------------------------
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self.state = "starting"
+        self._thread = threading.Thread(target=self._run, name="knomi-ble", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=10)
+        self._thread = None
+        self.state = "off"
+
+    def request_wifi(self):
+        self._wifi_request = True
+
+    def files_changed(self):
+        self._files_dirty = True
+
+    # ---- link thread ------------------------------------------------------
+
+    def _run(self):
+        try:
+            asyncio.run(self._main())
+        except Exception as e:  # pragma: no cover
+            self._logger.exception("KNOMI BLE thread died")
+            self.last_error = str(e)
+            self.state = "error"
+
+    async def _find(self):
+        from bleak import BleakScanner
+        self.state = "searching"
+        devices = await BleakScanner.discover(timeout=8.0, service_uuids=[SERVICE_UUID])
+        return devices[0].address if devices else None
+
+    async def _send_files(self, client):
+        for frame in encode_files(self._plugin.ble_file_list()):
+            await client.write_gatt_char(FILES_UUID, frame, response=True)
+
+    def _on_cmd(self, _sender, data):
+        try:
+            path = bytes(data).decode("utf-8", errors="replace")
+        except Exception:
+            return
+        if path == "/knomi/files":
+            self._files_dirty = True
+            return
+        try:
+            self._plugin.ble_command(path)
+        except Exception:
+            self._logger.exception("KNOMI BLE command failed: %s", path)
+
+    async def _main(self):
+        try:
+            from bleak import BleakClient
+        except ImportError:
+            self.state = "error"
+            self.last_error = "bleak is not installed"
+            return
+
+        while not self._stop.is_set():
+            try:
+                address = self._plugin.ble_configured_address() or await self._find()
+                if not address:
+                    self.state = "not found"
+                    await self._sleep(10)
+                    continue
+                self.state = "connecting"
+                self.address = address
+                gone = asyncio.Event()
+                loop = asyncio.get_running_loop()
+                async with BleakClient(address, timeout=20.0,
+                                       disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
+                    await client.start_notify(CMD_UUID, self._on_cmd)
+                    self.state = "connected"
+                    self.last_error = ""
+                    self._files_dirty = True
+                    self._logger.info("KNOMI BLE connected to %s", address)
+                    self._plugin.ble_remember_address(address)
+                    last, last_t = None, 0.0
+                    while not self._stop.is_set() and not gone.is_set():
+                        if self._files_dirty:
+                            self._files_dirty = False
+                            await self._send_files(client)
+                        wifi = self._wifi_request
+                        self._wifi_request = False
+                        payload = json.dumps(self._plugin.ble_status(wifi=wifi), separators=(",", ":")).encode()
+                        now = time.monotonic()
+                        if payload != last or now - last_t >= HEARTBEAT_S or wifi:
+                            await client.write_gatt_char(STATUS_UUID, payload, response=True)
+                            last, last_t = payload, now
+                        await asyncio.sleep(POLL_S)
+            except (FileNotFoundError, ConnectionRefusedError):
+                msg = "Bluetooth service not available (is bluetoothd running, and is Bluetooth enabled on the Pi?)"
+                self.last_error = msg
+                self._logger.info("KNOMI BLE: %s", msg)
+            except Exception as e:
+                msg = str(e) or e.__class__.__name__
+                if "auth" in msg.lower() or "encrypt" in msg.lower() or "not paired" in msg.lower():
+                    msg += " (pair once with bluetoothctl; the KNOMI shows the code)"
+                self.last_error = msg
+                self._logger.info("KNOMI BLE: %s", msg)
+            if not self._stop.is_set():
+                self.state = "disconnected"
+                await self._sleep(RETRY_S)
+        self.state = "off"
+
+    async def _sleep(self, seconds):
+        end = time.monotonic() + seconds
+        while not self._stop.is_set() and time.monotonic() < end:
+            await asyncio.sleep(0.25)
