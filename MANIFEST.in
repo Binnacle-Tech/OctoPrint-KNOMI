@@ -1,0 +1,3 @@
+include README.md LICENSE knomi_octoprint.cfg
+recursive-include octoprint_knomi/templates *.jinja2
+recursive-include octoprint_knomi/static *.js
