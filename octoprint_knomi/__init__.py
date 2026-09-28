@@ -125,7 +125,17 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             for flag, since in list(self._cmd_flags.items()):
                 if now - since > COMMAND_FLAG_TIMEOUT:
                     del self._cmd_flags[flag]
-            return {f: bool(f in self._cmd_flags or self._marker_flags[f]) for f in FLAGS}
+            status = {f: bool(f in self._cmd_flags or self._marker_flags[f]) for f in FLAGS}
+        # tells the KNOMI which progress OctoPrint's dashboard shows
+        status["time_progress"] = self._time_progress()
+        return status
+
+    def _time_progress(self):
+        """True when PrintTimeGenius is enabled: it turns the dashboard bar time-based."""
+        try:
+            return self._plugin_manager.get_plugin("PrintTimeGenius") is not None
+        except Exception:
+            return False
 
     # ---- gcode hooks -----------------------------------------------------
 
@@ -218,7 +228,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                                 self._printer.get_current_temperatures(),
                                 self._status(),
                                 self._settings.get(["tool"]) or "tool0",
-                                wifi)
+                                wifi, self._time_progress())
 
     def ble_file_list(self):
         from octoprint.filemanager.destinations import FileDestinations
@@ -260,7 +270,21 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
 # ---- helpers (module level so they can be tested without OctoPrint) --------
 
-def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False):
+def ui_progress(prog, time_based=False):
+    """Progress as OctoPrint's dashboard shows it.
+
+    With PrintTimeGenius enabled (time_based) the dashboard bar is
+    elapsed / (elapsed + remaining) whenever a time-left estimate exists;
+    otherwise it is the file position ("completion").
+    """
+    left = prog.get("printTimeLeft")
+    if left and time_based:
+        t = prog.get("printTime") or 0
+        return max(0.0, min(100.0, t * 100.0 / (t + left)))
+    return prog.get("completion")
+
+
+def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False, time_based=False):
     """OctoPrint state -> compact status for the KNOMI (keys decoded in knomi_ble.cpp)."""
     flags = (data.get("state") or {}).get("flags") or {}
     prog = data.get("progress") or {}
@@ -275,7 +299,7 @@ def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False):
         "o": int(bool(flags.get("operational"))),
         "p": int(any(flags.get(k) for k in ("printing", "cancelling", "resuming", "finishing"))),
         "pa": int(bool(flags.get("paused") or flags.get("pausing"))),
-        "g": r(prog.get("completion")),
+        "g": r(ui_progress(prog, time_based)),
         "t": r(prog.get("printTime")),
         "l": -1 if prog.get("printTimeLeft") is None else r(prog.get("printTimeLeft")),
         "n": job_file.rsplit("/", 1)[-1].encode("utf-8")[:31].decode("utf-8", errors="ignore"),
