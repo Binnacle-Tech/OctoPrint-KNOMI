@@ -94,6 +94,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._msg = ""       # last M117 / SET_DISPLAY_TEXT / action:notification
         self._msg_id = 0
         self._coaster = {}   # what the KNOMI's Coaster is doing (sidebar mirror)
+        self._coaster_watch_until = 0
         self._last_pushed = None
         self._ble = None
         self._layer_map = None   # layers.LayerMap of the file being printed
@@ -363,11 +364,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._settings.save()
 
     def ble_status(self, wifi=False):
-        return build_ble_status(self._printer.get_current_data(),
-                                self._printer.get_current_temperatures(),
-                                self._status(),
-                                self._settings.get(["tool"]) or "tool0",
-                                wifi, self._time_progress())
+        status = build_ble_status(self._printer.get_current_data(),
+                                  self._printer.get_current_temperatures(),
+                                  self._status(),
+                                  self._settings.get(["tool"]) or "tool0",
+                                  wifi, self._time_progress())
+        if self.coaster_watched():
+            status["cw"] = 1
+        return status
 
     def ble_file_list(self):
         from octoprint.filemanager.destinations import FileDestinations
@@ -400,12 +404,26 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         return True
 
     def get_api_commands(self):
-        return {"wifi_on": [], "coaster": []}
+        return {"wifi_on": [], "coaster": [], "coaster_watch": []}
+
+    def coaster_watched(self):
+        """Someone has the sidebar open: the KNOMI then sends head motion ~3x a second."""
+        return time.monotonic() < self._coaster_watch_until
 
     def coaster_update(self, data):
-        """The KNOMI reports Coaster's mood (and the last print's report card)."""
-        clean = {"mood": str(data.get("mood", ""))[:24], "feel": str(data.get("feel", ""))[:12],
-                 "hat": int(data.get("hat", 0) or 0)}
+        """The KNOMI reports Coaster's mood, quirk, feeling, decorations, head motion and last report card."""
+        def num(k, lo, hi):
+            try:
+                return max(lo, min(hi, float(data.get(k, 0) or 0)))
+            except (TypeError, ValueError):
+                return 0
+        clean = {k: str(data.get(k, ""))[:24] for k in ("mood", "feel", "q", "deco", "lights", "anim", "c")}
+        clean.update(hat=int(num("hat", 0, 9)), qs=int(num("qs", -1, 1)), shades=int(num("shades", 0, 1)),
+                     act=int(num("act", 0, 20)), south=int(num("south", 0, 1)), pr=int(num("pr", 0, 1)),
+                     h=num("h", -1, 1), heat=num("heat", 0, 1))
+        if "hx" in data:
+            clean.update(hx=num("hx", -40, 40), hy=num("hy", -40, 40), hs=num("hs", -1, 1),
+                         px=num("px", -20, 20), py=num("py", -20, 20), look=num("look", -40, 40))
         rep = data.get("report")
         if isinstance(rep, dict):
             clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
@@ -418,6 +436,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_api_command(self, command, data):
         if command == "coaster":
             self.coaster_update(data)
+            return flask.jsonify(ok=True, watch=self.coaster_watched())
+        if command == "coaster_watch":
+            self._coaster_watch_until = time.monotonic() + 12
             return flask.jsonify(ok=True)
         if command == "wifi_on" and self._ble:
             self._ble.request_wifi()
