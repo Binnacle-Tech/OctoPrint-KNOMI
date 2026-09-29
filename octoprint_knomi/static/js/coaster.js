@@ -7,7 +7,7 @@ $(function () {
     var M = {"calm":[0.5,1.0,0.0,0.0,14.0,0.0,1.0,0.0,0.0,0.0,0.0],"riding":[0.56,1.0,0.0,0.0,14.0,0.3,0.7,0.0,0.0,0.0,0.0],"excited":[0.85,1.05,0.0,0.0,12.0,0.7,0.0,0.9,0.0,0.0,0.0],"screaming":[1.0,1.3,0.0,0.0,8.0,0.0,0.0,1.7,0.0,0.0,0.0],"startled":[1.0,1.2,0.0,0.0,6.0,0.0,0.0,1.1,0.0,0.0,0.0],"elevator":[0.75,1.05,0.0,0.0,7.0,0.0,0.0,0.6,0.0,0.0,0.0],"sleepy":[0.02,1.0,0.0,0.0,11.0,0.0,1.0,0.0,0.0,0.0,0.0],"bored":[0.32,1.0,0.0,0.0,9.0,0.0,0.0,0.0,0.0,0.0,0.0],"shivering":[0.42,1.0,0.0,0.0,14.0,0.0,0.0,0.0,1.0,0.0,0.0],"dizzy":[0.5,1.0,0.0,1.0,14.0,0.0,0.0,0.0,0.0,1.0,0.0],"giggle":[1.0,1.05,1.0,0.0,12.0,0.8,0.0,0.8,0.0,0.0,0.0],"celebrate":[1.0,1.1,1.0,0.0,15.0,0.9,0.0,1.0,0.0,0.0,0.0],"ready":[1.0,1.1,0.0,0.0,13.0,0.8,0.0,0.5,0.0,0.0,0.0],"sad":[0.35,1.0,0.0,0.0,12.0,-0.9,0.0,0.0,0.0,0.0,-0.7],"shocked":[1.0,0.75,0.0,0.0,10.0,0.0,0.0,0.35,0.0,0.8,-0.4],"lonely":[0.45,1.0,0.0,0.0,9.0,-0.6,0.0,0.0,0.0,0.0,-0.5],"confused":[0.55,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.5,0.3],"heating up":[0.56,0.95,0.0,0.0,13.0,0.0,0.0,0.0,0.9,0.0,1.0],"cooling off":[0.3,1.0,0.0,0.0,12.0,0.5,0.4,0.0,0.0,0.0,0.0],"focused":[0.28,0.9,0.0,0.0,7.0,0.0,0.0,0.0,0.0,0.0,0.0],"almost there":[0.8,1.05,0.0,0.0,12.0,0.5,0.0,0.2,0.0,0.0,0.0],"hungry":[0.7,1.0,0.0,0.0,8.0,0.0,0.0,0.9,0.0,0.0,0.0],"windy":[0.3,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.6,0.0],"hanging on":[0.9,0.9,0.0,0.0,10.0,0.0,0.0,0.0,0.6,0.0,-0.3],"bracing":[0.08,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.5,0.0,-0.3],"leveling":[0.5,1.0,0.0,0.0,12.0,0.0,0.0,0.0,0.0,0.0,0.0],"scrubbing":[0.8,1.0,0.6,0.0,12.0,0.5,0.0,0.0,0.0,0.6,0.0],"whee":[1.0,1.15,0.0,0.0,13.0,0.8,0.0,1.3,0.0,0.0,0.0],"mad":[0.36,0.95,0.0,0.0,12.0,-0.35,0.0,0.0,0.3,0.0,1.0]};
     var KEYS = ["open", "size", "cheek", "orbit", "w", "curve", "omega", "gape", "zig", "wave", "tilt"];
     var QDUR = {glance: 1.6, "double blink": 0.5, "slow blink": 1.3, wink: 0.8, yawn: 2.4, hum: 3.6, sneeze: 1.7,
-        "look up": 1.9, stretch: 1.8, "eye roll": 1.3, nod: 0.7, cheer: 1.3, sigh: 1.9, huff: 0.9, cough: 1.1, hiccup: 0.5, doze: 5.0, daydream: 4.0};
+        "look up": 1.9, stretch: 1.8, "eye roll": 1.3, nod: 0.7, cheer: 1.3, sigh: 1.9, huff: 0.9, cough: 1.1, hiccup: 0.5, doze: 5.0, daydream: 4.0, delight: 1.3, wince: 1.1, signature: 2.2};
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
     function lerp(a, b, t) { return a + (b - a) * t; }
     function rnd(a, b) { return a + Math.random() * (b - a); }
@@ -33,10 +33,10 @@ $(function () {
             self.seen(true);
             if (c.mood !== st.mood) { moodT = 0; if (c.mood === "celebrate") spawnConfetti(); }
             if (c.q && c.q !== Q.name && QDUR[c.q]) { Q.name = c.q; Q.t = 0; Q.fired = {}; Q.side = c.qs || 1; }
-            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat", "hf", "wx"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
+            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat", "hf", "wx", "sig"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
             if (c.hx !== undefined) { st.hx = c.hx; st.hy = c.hy; st.hs = c.hs; st.px = c.px; st.py = c.py; st.look = c.look; st.live = true; st.liveAt = Date.now(); }
             self.moodLabel((c.mood === "whee" ? "Whee!" : "Coaster is " + c.mood) + (c.feel ? " · feeling " + c.feel : ""));
-            self.saying(c.say ? "\u201C" + c.say + "\u201D" : "");
+            self.saying(c.say ? "\u201C" + c.say + "\u201D" : c.mu ? "(" + c.mu + ")" : "");
             st.mat = c.mat || "";
             var r = c.report;
             if (r) {
@@ -65,7 +65,7 @@ $(function () {
         /* ---- quirks: the KNOMI says which one, the animation plays here ---- */
         function once(n) { if (Q.fired[n]) return false; Q.fired[n] = 1; return true; }
         function stepQuirk(dt) {
-            QF = {look: 0, lookY: 0, openL: 1, openR: 1, gape: 0, curve: 0, w: 0, cheek: 0, dx: 0, dy: 0, sq: 0};
+            QF = {look: 0, lookY: 0, openL: 1, openR: 1, gape: 0, curve: 0, w: 0, cheek: 0, dx: 0, dy: 0, sq: 0, zig: 0};
             sacc.t -= dt;
             if (sacc.t <= 0) { sacc.t = rnd(0.4, 2.2); sacc.tx = rnd(-4, 4); sacc.ty = rnd(-2, 2); }
             var ks = 1 - Math.exp(-dt * 30); sacc.x += (sacc.tx - sacc.x) * ks; sacc.y += (sacc.ty - sacc.y) * ks;
@@ -97,6 +97,16 @@ $(function () {
                 case "cough":
                     e = bump(t, D, 0.15); QF.openL = QF.openR = 1 - 0.6 * e; QF.gape = 0.5 * e * Math.abs(Math.sin(t * 9)); QF.w = -6 * e;
                     if (t > 0.1 && once(0)) head.y += 4; if (t > 0.5 && once(1)) head.y += 3;
+                    break;
+                case "delight": e = bump(t, D, 0.2); QF.cheek = e; QF.openL = QF.openR = 1 + e; QF.curve = 0.9 * e; QF.gape = 0.3 * e; QF.dy = -Math.abs(Math.sin(t * 8)) * 5 * e; break;
+                case "wince": e = bump(t, D, 0.12); QF.openL = QF.openR = 1 - 0.85 * e; QF.curve = -0.5 * e; QF.zig = 0.7 * e; QF.w = -3 * e; QF.sq = -0.06 * e; QF.dx = Math.sin(t * 35) * 1.2 * e; break;
+                case "signature":
+                    e = bump(t, D, 0.2); var u = clamp(t / D, 0, 1);
+                    if (st.sig === 0) { QF.look += Math.sin(u * 4 * Math.PI) * 16 * e; QF.lookY -= (1 - Math.cos(u * 4 * Math.PI)) * 4 * e; QF.curve = 0.7 * e; }
+                    else if (st.sig === 1) { if (u < 0.45) QF.openL = 1 - bump(t, D * 0.45, 0.1); else QF.openR = 1 - bump(t - D * 0.5, D * 0.45, 0.1); QF.curve = 0.8 * e; }
+                    else if (st.sig === 2) { QF.dx = Math.sin(t * 18) * 6 * e; QF.curve = 0.8 * e; QF.gape = 0.3 * e; }
+                    else if (st.sig === 3) { QF.dy = -Math.sin(u * Math.PI) * 12; QF.sq = 0.12 * Math.sin(u * Math.PI); QF.cheek = e; QF.openL = QF.openR = 1 + e; }
+                    else { QF.look += (u < 0.5 ? -1 : 1) * 14 * e; QF.dx = (u < 0.5 ? -1 : 1) * 4 * e; QF.curve = 0.6 * e; }
                     break;
                 case "hiccup": e = bump(t, D, 0.08); QF.openL = QF.openR = 1 + 0.5 * e; QF.gape = 0.3 * e; QF.w = -7 * e; QF.dy = -3 * e - 6 * e; break;
                 case "doze":
@@ -299,8 +309,8 @@ $(function () {
             if (st.act === 2) cy += Math.abs(Math.sin(now * Math.PI * 1.6)) * 5;           // probing
             if (st.act === 6) cx += Math.sin(now * 14) * 6;                                 // cleaning
             var blinkK = blinkC > 0 ? Math.sin(Math.PI * (1 - blinkC / 0.16)) : 0, open = E.open * (1 - blinkK);
-            var keep = {curve: E.curve, w: E.w, cheek: E.cheek, gape: E.gape, omega: E.omega};
-            E.curve += QF.curve; E.w = Math.max(4, E.w + QF.w); E.cheek = Math.max(E.cheek, QF.cheek); E.gape = Math.max(E.gape, QF.gape);
+            var keep = {curve: E.curve, w: E.w, cheek: E.cheek, gape: E.gape, omega: E.omega, zig: E.zig};
+            E.curve += QF.curve; E.w = Math.max(4, E.w + QF.w); E.cheek = Math.max(E.cheek, QF.cheek); E.gape = Math.max(E.gape, QF.gape); E.zig = Math.max(E.zig, QF.zig);
             E.omega *= 1 - clamp(QF.gape / 0.4, 0, 1);
             eye(ctx, cx - 58 * sx, cy - 15 * sy + tl, -1, sx, clamp(open * QF.openL, 0, 1.1), QF.lookY);
             eye(ctx, cx + 58 * sx, cy - 15 * sy + tr, 1, sx, clamp(open * QF.openR, 0, 1.1), QF.lookY);
