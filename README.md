@@ -14,6 +14,8 @@
   - `// KNOMI <flag>=1` lines from your Klipper macros, so steps inside `PRINT_START` show up too ([`knomi_octoprint.cfg`](knomi_octoprint.cfg))
   - `// action:paused` / `// action:resumed`
 - **Signals for Coaster, the KNOMI firmware's mascot:** filament runout (`M600` or a runout message), the part cooling fan speed (`M106`/`M107`) and the speed factor (`M220`), so it can look hungry, squint into the wind or hang on.
+- **Display messages.** `M117`, `SET_DISPLAY_TEXT MSG=…` and `// action:notification` lines are passed to the KNOMI, where Coaster says them in a speech bubble (also available as `{msg}` in the print screen designer).
+- **Coaster in your OctoPrint sidebar.** A live mirror of the KNOMI's Coaster: its mood, seasonal hat and the last print's report card (screams, peak g, dizzy spells). Needs KNOMI firmware OP16 or newer.
 - **Instant updates.** Changes are pushed to the KNOMI over OctoPrint's websocket.
 - **Bluetooth LE link (optional).** The plugin connects to the KNOMI 2 directly, pushes status and the file list, and runs the KNOMI's touchscreen buttons inside OctoPrint. No API key, and the KNOMI can even run with WiFi off.
 - No G28 or bed-mesh macro overrides are needed, so it avoids the "Macro G28 called recursively" and KAMP problems of the stock KNOMI macros.

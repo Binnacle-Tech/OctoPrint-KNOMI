@@ -13,6 +13,7 @@ Two sources, OR'd together:
      that run *inside* macros like PRINT_START are visible too. See
      knomi_octoprint.cfg for the _KNOMI_SET helper that emits them.
 """
+import json
 import re
 import threading
 import time
@@ -70,6 +71,7 @@ RESUME_ACTIONS = ("action:resumed", "action:resume", "action:cancel")
 # Safety net: a flag from a sent command never outlives this (missed "ok")
 COMMAND_FLAG_TIMEOUT = 30 * 60
 
+DISPLAY_TEXT_RE = re.compile(r"MSG=(.*)$", re.IGNORECASE)
 MARKER_RE = re.compile(r"KNOMI\s+(\w+)\s*=\s*(\w+)", re.IGNORECASE)
 TRUE_VALUES = ("1", "true", "yes", "on")
 
@@ -88,6 +90,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._marker_flags = dict.fromkeys(FLAGS, False)
         self._fan = 0        # part cooling fan, % (M106/M107)
         self._speed = 100    # speed factor, % (M220)
+        self._msg = ""       # last M117 / SET_DISPLAY_TEXT / action:notification
+        self._msg_id = 0
+        self._coaster = {}   # what the KNOMI's Coaster is doing (sidebar mirror)
         self._last_pushed = None
         self._ble = None
 
@@ -135,6 +140,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             status = {f: bool(f in self._cmd_flags or self._marker_flags[f]) for f in FLAGS}
         status["fan"] = self._fan
         status["speed"] = self._speed
+        status["msg"] = self._msg
+        status["msg_id"] = self._msg_id
         # tells the KNOMI which progress OctoPrint's dashboard shows
         status["time_progress"] = self._time_progress()
         return status
@@ -158,6 +165,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def _set_runout(self):
         with self._lock:
             self._marker_flags["runout"] = True
+        self._push()
+
+    def _set_message(self, text):
+        """A display message for the KNOMI (Coaster says it in a speech bubble)."""
+        text = " ".join((text or "").split())[:64]
+        with self._lock:
+            self._msg = text
+            self._msg_id += 1
         self._push()
 
     def _track_fan_speed(self, parts):
@@ -187,6 +202,11 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
         parts = cmd.strip().upper().split()
         word = parts[0] if parts else ""
+        if word == "M117":
+            self._set_message(cmd.strip()[4:].strip())
+        elif word == "SET_DISPLAY_TEXT":
+            m = DISPLAY_TEXT_RE.search(cmd)
+            self._set_message(m.group(1).strip('"\'') if m else "")
         if word in ("M106", "M107", "M220"):
             self._track_fan_speed(parts)
         if word in RUNOUT_COMMANDS:
@@ -212,6 +232,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 self._push()
         elif "action:" in stripped or "runout" in stripped.lower():
             low = stripped.lower()
+            i = low.find("action:notification")
+            if i >= 0:
+                self._set_message(stripped[i + len("action:notification"):].strip())
             if any(w in low for w in RUNOUT_WORDS):
                 self._set_runout()
             if any(a in low for a in PAUSE_ACTIONS):
@@ -237,10 +260,12 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         return True
 
     def get_template_configs(self):
-        return [{"type": "settings", "custom_bindings": True}]
+        return [{"type": "settings", "custom_bindings": True},
+                {"type": "sidebar", "name": "Coaster", "icon": "smile-o", "custom_bindings": True,
+                 "template": "knomi_sidebar.jinja2"}]
 
     def get_assets(self):
-        return {"js": ["js/knomi.js"]}
+        return {"js": ["js/knomi.js", "js/coaster.js"]}
 
     def on_after_startup(self):
         self._ble = BleLink(self, self._logger)
@@ -303,15 +328,31 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         return True
 
     def get_api_commands(self):
-        return {"wifi_on": []}
+        return {"wifi_on": [], "coaster": []}
+
+    def coaster_update(self, data):
+        """The KNOMI reports Coaster's mood (and the last print's report card)."""
+        clean = {"mood": str(data.get("mood", ""))[:24], "hat": int(data.get("hat", 0) or 0)}
+        rep = data.get("report")
+        if isinstance(rep, dict):
+            clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
+        self._coaster = clean
+        try:
+            self._plugin_manager.send_plugin_message(self._identifier, {"coaster": clean})
+        except Exception:
+            self._logger.exception("Could not push Coaster state")
 
     def on_api_command(self, command, data):
+        if command == "coaster":
+            self.coaster_update(data)
+            return flask.jsonify(ok=True)
         if command == "wifi_on" and self._ble:
             self._ble.request_wifi()
             return flask.jsonify(ok=self._ble.state == "connected")
 
     def on_api_get(self, request):
         result = self._status()
+        result["coaster"] = self._coaster
         if self._ble:
             result.update(ble_state=self._ble.state, ble_address=self._ble.address,
                           ble_error=self._ble.last_error)
@@ -358,6 +399,8 @@ def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False, time_ba
         "k": sum(1 << i for i, f in enumerate(FLAGS) if knomi_flags.get(f)),
         "f": int(knomi_flags.get("fan", 0)),
         "sp": int(knomi_flags.get("speed", 100)),
+        "m": knomi_flags.get("msg", ""),
+        "mi": int(knomi_flags.get("msg_id", 0)),
     }
     if data.get("currentZ") is not None:
         status["z"] = int(round(data["currentZ"] * 1000))
@@ -379,6 +422,12 @@ def collect_paths(entries):
 def handle_knomi_command(plugin, path):
     """Run a KNOMI command path (sent over BLE) inside OctoPrint."""
     printer = plugin._printer
+    if path.startswith("/coaster?"):
+        try:
+            plugin.coaster_update(json.loads(path[len("/coaster?"):]))
+        except (ValueError, TypeError):
+            pass
+        return
     if path.startswith(GCODE_PREFIX):
         printer.commands(path[len(GCODE_PREFIX):])
     elif path.startswith(PRINT_PREFIX):
