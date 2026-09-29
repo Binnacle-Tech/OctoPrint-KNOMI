@@ -1,5 +1,6 @@
 <div id="knomi_coaster" style="text-align:center">
   <canvas id="knomi_coaster_canvas" width="360" height="360" style="width:180px;height:180px;border-radius:50%;background:#000;box-shadow:0 0 0 5px #1b2731"></canvas>
+  <div style="margin-top:6px;font-style:italic;min-height:1.2em" data-bind="text: saying"></div>
   <div style="margin-top:8px;font-weight:600" data-bind="text: moodLabel"></div>
   <div class="muted" style="font-size:12px" data-bind="text: reportLine, visible: reportLine"></div>
   <div class="muted" style="font-size:12px" data-bind="visible: !seen()">Waiting for the KNOMI (firmware OP16 or newer; OP25 to follow its head and quirks).</div>

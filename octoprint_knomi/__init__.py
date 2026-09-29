@@ -151,6 +151,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         status["time_progress"] = self._time_progress()
         # layer and Z from the file position, the way OctoPrint's G-code viewer follows a print
         lm = self._layer_map
+        if lm is not None and lm.material:
+            status["mat"] = lm.material
         if lm is not None and self._layer[0] > 0:
             status["layer"] = self._layer[0]
             status["layers"] = max(lm.total, self._layer[0])
@@ -417,7 +419,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 return max(lo, min(hi, float(data.get(k, 0) or 0)))
             except (TypeError, ValueError):
                 return 0
-        clean = {k: str(data.get(k, ""))[:24] for k in ("mood", "feel", "q", "deco", "lights", "anim", "c")}
+        clean = {k: str(data.get(k, ""))[:24] for k in ("mood", "feel", "q", "deco", "lights", "anim", "c", "mat")}
+        if data.get("say"):
+            clean["say"] = str(data["say"])[:64]
         clean.update(hat=int(num("hat", 0, 9)), qs=int(num("qs", -1, 1)), shades=int(num("shades", 0, 1)),
                      act=int(num("act", 0, 20)), south=int(num("south", 0, 1)), pr=int(num("pr", 0, 1)),
                      h=num("h", -1, 1), heat=num("heat", 0, 1))
@@ -502,6 +506,8 @@ def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False, time_ba
         status["z"] = knomi_flags["z"]
     if knomi_flags.get("layer"):
         status["ly"] = [knomi_flags["layer"], knomi_flags.get("layers", 0)]
+    if knomi_flags.get("mat"):
+        status["mt"] = knomi_flags["mat"]
     if wifi:
         status["w"] = 1
     return status

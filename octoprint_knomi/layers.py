@@ -22,11 +22,30 @@ _TOTAL = [re.compile(r";\s*LAYER_COUNT\s*:\s*(\d+)", re.I),                # Cur
           re.compile(r";\s*layer_count\s*=\s*(\d+)", re.I)]
 
 
+# the filament, from the slicer's settings block (PrusaSlicer, Orca, Bambu Studio, SuperSlicer:
+# "; filament_type = PETG", Cura: ";MATERIAL:" style names) or the preset name
+_MATERIAL = [re.compile(r";\s*filament_type\s*=\s*([^;\n]+)", re.I),
+             re.compile(r";\s*filament_settings_id\s*=\s*([^\n]+)", re.I),
+             re.compile(r";\s*MATERIAL(?:\.NAME)?\s*[:=]\s*([^\n]+)", re.I)]
+MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "NYLON", "PC"]
+
+
+def material_of(text):
+    """'PETG', 'PLA'... from a slicer string or a file name; None if it doesn't say."""
+    t = re.sub(r"[^A-Z0-9]+", " ", (text or "").upper())   # "benchy_petg.gcode" -> "BENCHY PETG GCODE"
+    for k, rx in (("PETG", r"PETG|PET G|PCTG"), ("TPU", r"TPU|TPE|FLEX\w*"), ("ASA", r"ASA"), ("ABS", r"ABS"),
+                  ("NYLON", r"NYLON|PA|PA6|PA12|PAHT"), ("PC", r"PC|POLYCARBONATE"), ("PLA", r"PLA")):
+        if re.search(r"(?<![A-Z])(?:" + rx + r")(?![A-Z])", t):
+            return k
+    return None
+
+
 class LayerMap(object):
-    def __init__(self, offsets, zs, total=None):
+    def __init__(self, offsets, zs, total=None, material=None):
         self.offsets = offsets      # byte offset where each layer starts, ascending
         self.zs = zs                # Z of each layer, mm
         self.total = total or len(offsets)
+        self.material = material    # "PETG" etc, or None
 
     def at(self, filepos):
         """(layer number starting at 1, Z in mm) at a file position; (0, None) before the first layer."""
@@ -43,6 +62,7 @@ def scan(path):
     by_comment, cz = [], []          # layer starts from slicer comments
     by_z, zz = [], []                # layer starts from Z moves
     total = None
+    material = None
     absolute = True                  # G90 / G91
     e_absolute = True                # M82 / M83
     last_e = 0.0
@@ -70,6 +90,12 @@ def scan(path):
                     cz[pending_comment] = float(m.group(1))
                     pending_comment = None
                     continue
+                if material is None:
+                    for rx in _MATERIAL:
+                        m = rx.match(line)
+                        if m:
+                            material = material_of(m.group(1))
+                            break
                 if total is None:
                     for rx in _TOTAL:
                         m = rx.search(line)
@@ -124,5 +150,5 @@ def scan(path):
         for i, v in enumerate(cz):
             if v is None:
                 cz[i] = cz[i - 1] if i else 0.0
-        return LayerMap(by_comment, cz, total)
-    return LayerMap(by_z, zz, total)
+        return LayerMap(by_comment, cz, total, material or material_of(path.rsplit("/", 1)[-1]))
+    return LayerMap(by_z, zz, total, material or material_of(path.rsplit("/", 1)[-1]))
