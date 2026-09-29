@@ -18,7 +18,8 @@ $(function () {
         "windy": [0.3, 1, 0, 0, 10, 0, 0, 0, 0, 0.6, 0], "hanging on": [0.9, 0.9, 0, 0, 10, 0, 0, 0, 0.6, 0, -0.3],
         "bracing": [0.08, 1, 0, 0, 10, 0, 0, 0, 0.5, 0, -0.3], "leveling": [0.5, 1, 0, 0, 12, 0, 0, 0, 0, 0, 0],
         "scrubbing": [0.8, 1, 0.6, 0, 12, 0.5, 0, 0, 0, 0.6, 0],
-        "whee": [1, 1.15, 0, 0, 13, 0.8, 0, 1.3, 0, 0, 0]
+        "whee": [1, 1.15, 0, 0, 13, 0.8, 0, 1.3, 0, 0, 0],
+        "mad": [0.36, 0.95, 0, 0, 12, -0.35, 0, 0, 0.3, 0, 1]
     };
     var KEYS = ["open", "size", "cheek", "orbit", "w", "curve", "omega", "gape", "zig", "wave", "tilt"];
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -37,7 +38,7 @@ $(function () {
             self.seen(true);
             mood = M[c.mood] ? c.mood : "calm";
             hat = c.hat || 0;
-            self.moodLabel(c.mood === "whee" ? "Whee!" : "Coaster is " + c.mood);
+            self.moodLabel((c.mood === "whee" ? "Whee!" : "Coaster is " + c.mood) + (c.feel ? " · feeling " + c.feel : ""));
             var r = c.report;
             if (r) {
                 var h = Math.floor(r.secs / 3600), m = Math.floor((r.secs % 3600) / 60);

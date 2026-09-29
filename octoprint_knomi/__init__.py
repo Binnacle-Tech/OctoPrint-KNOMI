@@ -404,7 +404,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def coaster_update(self, data):
         """The KNOMI reports Coaster's mood (and the last print's report card)."""
-        clean = {"mood": str(data.get("mood", ""))[:24], "hat": int(data.get("hat", 0) or 0)}
+        clean = {"mood": str(data.get("mood", ""))[:24], "feel": str(data.get("feel", ""))[:12],
+                 "hat": int(data.get("hat", 0) or 0)}
         rep = data.get("report")
         if isinstance(rep, dict):
             clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
