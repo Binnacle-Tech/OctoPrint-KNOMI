@@ -23,6 +23,7 @@ import octoprint.plugin
 from octoprint.events import Events
 
 from .ble_link import BleLink
+from . import layers
 
 # KNOMI Moonraker-style command paths (what the KNOMI UI queues)
 GCODE_PREFIX = "/printer/gcode/script?script="
@@ -95,6 +96,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._coaster = {}   # what the KNOMI's Coaster is doing (sidebar mirror)
         self._last_pushed = None
         self._ble = None
+        self._layer_map = None   # layers.LayerMap of the file being printed
+        self._layer = (0, None)  # (layer, Z mm) at OctoPrint's file position
+        self._layer_timer = None
 
     # ---- helpers ---------------------------------------------------------
 
@@ -144,7 +148,63 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         status["msg_id"] = self._msg_id
         # tells the KNOMI which progress OctoPrint's dashboard shows
         status["time_progress"] = self._time_progress()
+        # layer and Z from the file position, the way OctoPrint's G-code viewer follows a print
+        lm = self._layer_map
+        if lm is not None and self._layer[0] > 0:
+            status["layer"] = self._layer[0]
+            status["layers"] = max(lm.total, self._layer[0])
+            status["z"] = int(round(self._layer[1] * 1000)) if self._layer[1] is not None else None
         return status
+
+    # ---- layers ------------------------------------------------------------
+
+    def _start_layer_tracking(self, payload):
+        self._stop_layer_tracking()
+        origin, path = payload.get("origin"), payload.get("path")
+        if origin != "local" or not path:
+            self._logger.info("KNOMI: no layer tracking for %s files", origin)
+            return
+        try:
+            disk = self._file_manager.path_on_disk("local", path)
+        except Exception:
+            self._logger.exception("KNOMI: can't find %s on disk", path)
+            return
+
+        def work():
+            try:
+                t0 = time.monotonic()
+                lm = layers.scan(disk)
+                self._logger.info("KNOMI: %s has %d layers (scanned in %.1f s)", path, lm.total, time.monotonic() - t0)
+                self._layer_map = lm
+            except Exception:
+                self._logger.exception("KNOMI: couldn't scan %s for layers", path)
+
+        threading.Thread(target=work, name="knomi-layers", daemon=True).start()
+        from octoprint.util import RepeatedTimer
+        self._layer_timer = RepeatedTimer(1.0, self._poll_layer, run_first=False)
+        self._layer_timer.start()
+
+    def _stop_layer_tracking(self):
+        if self._layer_timer:
+            self._layer_timer.cancel()
+            self._layer_timer = None
+        self._layer_map = None
+        if self._layer != (0, None):
+            self._layer = (0, None)
+            self._push()
+
+    def _poll_layer(self):
+        lm = self._layer_map
+        if lm is None:
+            return
+        try:
+            pos = (self._printer.get_current_data().get("progress") or {}).get("filepos")
+        except Exception:
+            return
+        now = lm.at(pos)
+        if now != self._layer:
+            self._layer = now
+            self._push()
 
     def _time_progress(self):
         """True when PrintTimeGenius is enabled: it turns the dashboard bar time-based."""
@@ -271,6 +331,13 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._ble = BleLink(self, self._logger)
         if self._settings.get_boolean(["ble_enabled"]):
             self._ble.start()
+        # OctoPrint restarted mid-print: pick the layers up again
+        try:
+            if self._printer.is_printing() or self._printer.is_paused():
+                f = (self._printer.get_current_job() or {}).get("file") or {}
+                self._start_layer_tracking({"origin": f.get("origin"), "path": f.get("path")})
+        except Exception:
+            self._logger.exception("KNOMI: couldn't resume layer tracking")
 
     def on_shutdown(self):
         if self._ble:
@@ -313,6 +380,11 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_event(self, event, payload):
         if self._ble and event in (Events.FILE_ADDED, Events.FILE_REMOVED, Events.UPDATED_FILES):
             self._ble.files_changed()
+        if event == Events.PRINT_STARTED:
+            self._start_layer_tracking(payload or {})
+        elif event in (Events.PRINT_DONE, Events.PRINT_CANCELLED, Events.PRINT_FAILED,
+                       Events.DISCONNECTED, Events.ERROR):
+            self._stop_layer_tracking()
         if event in (Events.DISCONNECTED, Events.ERROR, Events.CONNECTED,
                      Events.PRINT_CANCELLED, Events.PRINT_FAILED):
             self._reset()
@@ -404,6 +476,10 @@ def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False, time_ba
     }
     if data.get("currentZ") is not None:
         status["z"] = int(round(data["currentZ"] * 1000))
+    elif knomi_flags.get("z") is not None:
+        status["z"] = knomi_flags["z"]
+    if knomi_flags.get("layer"):
+        status["ly"] = [knomi_flags["layer"], knomi_flags.get("layers", 0)]
     if wifi:
         status["w"] = 1
     return status
