@@ -424,7 +424,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             clean["say"] = str(data["say"])[:64]
         clean.update(hat=int(num("hat", 0, 9)), qs=int(num("qs", -1, 1)), shades=int(num("shades", 0, 1)),
                      act=int(num("act", 0, 20)), south=int(num("south", 0, 1)), pr=int(num("pr", 0, 1)),
-                     h=num("h", -1, 1), heat=num("heat", 0, 1))
+                     h=num("h", -1, 1), heat=num("heat", 0, 1), hf=num("hf", 0, 1), wx=int(num("wx", -1, 1)))
         if "hx" in data:
             clean.update(hx=num("hx", -40, 40), hy=num("hy", -40, 40), hs=num("hs", -1, 1),
                          px=num("px", -20, 20), py=num("py", -20, 20), look=num("look", -40, 40))

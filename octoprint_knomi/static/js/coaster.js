@@ -4,10 +4,10 @@
 // quirk animations, snow) runs here, so it's close to the device but not frame-exact.
 $(function () {
     // open, size, cheek, orbit, w, curve, omega, gape, zig, wave, tilt (same table as the firmware)
-    var M = {"calm":[0.5,1.0,0.0,0.0,14.0,0.0,1.0,0.0,0.0,0.0,0.0],"riding":[0.56,1.0,0.0,0.0,14.0,0.3,0.7,0.0,0.0,0.0,0.0],"excited":[0.85,1.05,0.0,0.0,12.0,0.7,0.0,0.9,0.0,0.0,0.0],"screaming":[1.0,1.3,0.0,0.0,8.0,0.0,0.0,1.7,0.0,0.0,0.0],"startled":[1.0,1.2,0.0,0.0,6.0,0.0,0.0,1.1,0.0,0.0,0.0],"elevator":[0.75,1.05,0.0,0.0,7.0,0.0,0.0,0.6,0.0,0.0,0.0],"sleepy":[0.02,1.0,0.0,0.0,11.0,0.0,1.0,0.0,0.0,0.0,0.0],"bored":[0.32,1.0,0.0,0.0,9.0,0.0,0.0,0.0,0.0,0.0,0.0],"shivering":[0.42,1.0,0.0,0.0,14.0,0.0,0.0,0.0,1.0,0.0,0.0],"dizzy":[0.5,1.0,0.0,1.0,14.0,0.0,0.0,0.0,0.0,1.0,0.0],"giggle":[1.0,1.05,1.0,0.0,12.0,0.8,0.0,0.8,0.0,0.0,0.0],"celebrate":[1.0,1.1,1.0,0.0,15.0,0.9,0.0,1.0,0.0,0.0,0.0],"ready":[1.0,1.1,0.0,0.0,13.0,0.8,0.0,0.5,0.0,0.0,0.0],"sad":[0.35,1.0,0.0,0.0,12.0,-0.9,0.0,0.0,0.0,0.0,-0.7],"shocked":[1.0,0.75,0.0,0.0,10.0,0.0,0.0,0.35,0.0,0.8,-0.4],"lonely":[0.45,1.0,0.0,0.0,9.0,-0.6,0.0,0.0,0.0,0.0,-0.5],"confused":[0.55,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.5,0.3],"heating up":[0.42,0.95,0.0,0.0,13.0,0.0,0.0,0.0,0.8,0.0,1.0],"cooling off":[0.3,1.0,0.0,0.0,12.0,0.5,0.4,0.0,0.0,0.0,0.0],"focused":[0.28,0.9,0.0,0.0,7.0,0.0,0.0,0.0,0.0,0.0,0.0],"almost there":[0.8,1.05,0.0,0.0,12.0,0.5,0.0,0.2,0.0,0.0,0.0],"hungry":[0.7,1.0,0.0,0.0,8.0,0.0,0.0,0.9,0.0,0.0,0.0],"windy":[0.3,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.6,0.0],"hanging on":[0.9,0.9,0.0,0.0,10.0,0.0,0.0,0.0,0.6,0.0,-0.3],"bracing":[0.08,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.5,0.0,-0.3],"leveling":[0.5,1.0,0.0,0.0,12.0,0.0,0.0,0.0,0.0,0.0,0.0],"scrubbing":[0.8,1.0,0.6,0.0,12.0,0.5,0.0,0.0,0.0,0.6,0.0],"whee":[1.0,1.15,0.0,0.0,13.0,0.8,0.0,1.3,0.0,0.0,0.0],"mad":[0.36,0.95,0.0,0.0,12.0,-0.35,0.0,0.0,0.3,0.0,1.0]};
+    var M = {"calm":[0.5,1.0,0.0,0.0,14.0,0.0,1.0,0.0,0.0,0.0,0.0],"riding":[0.56,1.0,0.0,0.0,14.0,0.3,0.7,0.0,0.0,0.0,0.0],"excited":[0.85,1.05,0.0,0.0,12.0,0.7,0.0,0.9,0.0,0.0,0.0],"screaming":[1.0,1.3,0.0,0.0,8.0,0.0,0.0,1.7,0.0,0.0,0.0],"startled":[1.0,1.2,0.0,0.0,6.0,0.0,0.0,1.1,0.0,0.0,0.0],"elevator":[0.75,1.05,0.0,0.0,7.0,0.0,0.0,0.6,0.0,0.0,0.0],"sleepy":[0.02,1.0,0.0,0.0,11.0,0.0,1.0,0.0,0.0,0.0,0.0],"bored":[0.32,1.0,0.0,0.0,9.0,0.0,0.0,0.0,0.0,0.0,0.0],"shivering":[0.42,1.0,0.0,0.0,14.0,0.0,0.0,0.0,1.0,0.0,0.0],"dizzy":[0.5,1.0,0.0,1.0,14.0,0.0,0.0,0.0,0.0,1.0,0.0],"giggle":[1.0,1.05,1.0,0.0,12.0,0.8,0.0,0.8,0.0,0.0,0.0],"celebrate":[1.0,1.1,1.0,0.0,15.0,0.9,0.0,1.0,0.0,0.0,0.0],"ready":[1.0,1.1,0.0,0.0,13.0,0.8,0.0,0.5,0.0,0.0,0.0],"sad":[0.35,1.0,0.0,0.0,12.0,-0.9,0.0,0.0,0.0,0.0,-0.7],"shocked":[1.0,0.75,0.0,0.0,10.0,0.0,0.0,0.35,0.0,0.8,-0.4],"lonely":[0.45,1.0,0.0,0.0,9.0,-0.6,0.0,0.0,0.0,0.0,-0.5],"confused":[0.55,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.5,0.3],"heating up":[0.56,0.95,0.0,0.0,13.0,0.0,0.0,0.0,0.9,0.0,1.0],"cooling off":[0.3,1.0,0.0,0.0,12.0,0.5,0.4,0.0,0.0,0.0,0.0],"focused":[0.28,0.9,0.0,0.0,7.0,0.0,0.0,0.0,0.0,0.0,0.0],"almost there":[0.8,1.05,0.0,0.0,12.0,0.5,0.0,0.2,0.0,0.0,0.0],"hungry":[0.7,1.0,0.0,0.0,8.0,0.0,0.0,0.9,0.0,0.0,0.0],"windy":[0.3,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.0,0.6,0.0],"hanging on":[0.9,0.9,0.0,0.0,10.0,0.0,0.0,0.0,0.6,0.0,-0.3],"bracing":[0.08,1.0,0.0,0.0,10.0,0.0,0.0,0.0,0.5,0.0,-0.3],"leveling":[0.5,1.0,0.0,0.0,12.0,0.0,0.0,0.0,0.0,0.0,0.0],"scrubbing":[0.8,1.0,0.6,0.0,12.0,0.5,0.0,0.0,0.0,0.6,0.0],"whee":[1.0,1.15,0.0,0.0,13.0,0.8,0.0,1.3,0.0,0.0,0.0],"mad":[0.36,0.95,0.0,0.0,12.0,-0.35,0.0,0.0,0.3,0.0,1.0]};
     var KEYS = ["open", "size", "cheek", "orbit", "w", "curve", "omega", "gape", "zig", "wave", "tilt"];
     var QDUR = {glance: 1.6, "double blink": 0.5, "slow blink": 1.3, wink: 0.8, yawn: 2.4, hum: 3.6, sneeze: 1.7,
-        "look up": 1.9, stretch: 1.8, "eye roll": 1.3, nod: 0.7, cheer: 1.3, sigh: 1.9, huff: 0.9, cough: 1.1};
+        "look up": 1.9, stretch: 1.8, "eye roll": 1.3, nod: 0.7, cheer: 1.3, sigh: 1.9, huff: 0.9, cough: 1.1, hiccup: 0.5, doze: 5.0, daydream: 4.0};
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
     function lerp(a, b, t) { return a + (b - a) * t; }
     function rnd(a, b) { return a + Math.random() * (b - a); }
@@ -33,7 +33,7 @@ $(function () {
             self.seen(true);
             if (c.mood !== st.mood) { moodT = 0; if (c.mood === "celebrate") spawnConfetti(); }
             if (c.q && c.q !== Q.name && QDUR[c.q]) { Q.name = c.q; Q.t = 0; Q.fired = {}; Q.side = c.qs || 1; }
-            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
+            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat", "hf", "wx"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
             if (c.hx !== undefined) { st.hx = c.hx; st.hy = c.hy; st.hs = c.hs; st.px = c.px; st.py = c.py; st.look = c.look; st.live = true; st.liveAt = Date.now(); }
             self.moodLabel((c.mood === "whee" ? "Whee!" : "Coaster is " + c.mood) + (c.feel ? " · feeling " + c.feel : ""));
             self.saying(c.say ? "\u201C" + c.say + "\u201D" : "");
@@ -98,6 +98,12 @@ $(function () {
                     e = bump(t, D, 0.15); QF.openL = QF.openR = 1 - 0.6 * e; QF.gape = 0.5 * e * Math.abs(Math.sin(t * 9)); QF.w = -6 * e;
                     if (t > 0.1 && once(0)) head.y += 4; if (t > 0.5 && once(1)) head.y += 3;
                     break;
+                case "hiccup": e = bump(t, D, 0.08); QF.openL = QF.openR = 1 + 0.5 * e; QF.gape = 0.3 * e; QF.w = -7 * e; QF.dy = -3 * e - 6 * e; break;
+                case "doze":
+                    if (t < 4.2) { e = clamp(t / 3.5, 0, 1); QF.openL = QF.openR = 1 - 0.95 * e; QF.dy = 5 * e; QF.sq = -0.04 * e; }
+                    else { if (once(0)) blinkC = 0.16; QF.openL = QF.openR = 1.35; QF.dy = -6; }
+                    break;
+                case "daydream": e = bump(t, D, 0.6); QF.look += Q.side * 12 * e; QF.lookY -= 6 * e; QF.openL = QF.openR = 1 - 0.15 * e; QF.curve = 0.2 * e; break;
                 case "huff": e = bump(t, D, 0.12); QF.dy = 4 * e; QF.gape = 0.4 * e; QF.w = -7 * e; QF.dx = Math.sin(t * 40) * 1.5 * e; break;
             }
         }
@@ -202,7 +208,7 @@ $(function () {
             if (shades < 0.02) return;
             var drop = (1 - shades) * -40; ctx.globalAlpha = Math.min(1, shades * 1.5);
             ctx.fillStyle = st.c; ctx.strokeStyle = st.c; ctx.lineWidth = 3;
-            [-1, 1].forEach(function (s) { var x = cx + s * 54 * sx; ctx.beginPath(); ctx.moveTo(x - 31, ey - 11 + drop); ctx.lineTo(x + 31, ey - 11 + drop); ctx.quadraticCurveTo(x + 30, ey + 15 + drop, x, ey + 15 + drop); ctx.quadraticCurveTo(x - 30, ey + 15 + drop, x - 31, ey - 11 + drop); ctx.fill(); });
+            [-1, 1].forEach(function (s) { var x = cx + s * 58 * sx; ctx.beginPath(); ctx.moveTo(x - 31, ey - 11 + drop); ctx.lineTo(x + 31, ey - 11 + drop); ctx.quadraticCurveTo(x + 30, ey + 15 + drop, x, ey + 15 + drop); ctx.quadraticCurveTo(x - 30, ey + 15 + drop, x - 31, ey - 11 + drop); ctx.fill(); });
             ctx.beginPath(); ctx.moveTo(cx - 24 * sx, ey - 8 + drop); ctx.quadraticCurveTo(cx, ey - 14 + drop, cx + 24 * sx, ey - 8 + drop); ctx.stroke();
             ctx.globalAlpha = 1;
         }
@@ -216,7 +222,7 @@ $(function () {
 
         /* ---- the face (same drawing as the KNOMI) ---- */
         function eye(ctx, ex, ey, side, sx, open, lookY) {
-            var L = 26 * sx, r = 11 * E.size, slide = clamp(pup.x * 1.6 + look + QF.look, -(L - r), L - r);
+            var L = 26 * 1.1 * sx, r = 11 * 1.1 * E.size, slide = clamp(pup.x * 1.6 + look + QF.look, -(L - r), L - r);
             var squash = clamp(1 + pup.y / 22, 0.55, 1.5);
             var ox = Math.cos(now * 6 * side) * 9 * E.orbit, oy = Math.sin(now * 6 * side) * 4 * E.orbit;
             var px = ex + slide + ox, py = ey + oy + lookY, ry = r * squash, lid = py + ry - open * 2 * ry, slope = -side * 0.28 * E.tilt;
@@ -228,19 +234,19 @@ $(function () {
             var k = clamp((open - 0.5) / 0.3, 0, 1);
             if (k < 0.98) {
                 var x0 = lerp(ex - L, px, k), x1 = lerp(ex + L, px, k);
-                ctx.globalAlpha = 1 - k * 0.6; ctx.lineWidth = 5; ctx.beginPath();
+                ctx.globalAlpha = 1 - k * 0.6; ctx.lineWidth = 6; ctx.beginPath();
                 ctx.moveTo(x0, lid + slope * (x0 - ex)); ctx.lineTo(x1, lid + slope * (x1 - ex)); ctx.stroke(); ctx.globalAlpha = 1;
             }
         }
         function mouth(ctx, mx, my) {
-            var N = 24, top = [], bot = [], w = E.w, z = st.mood === "shivering" && Math.sin(now * 38) > 0 ? 0.5 : 0;
+            var N = 24, top = [], bot = [], w = E.w * 1.1, z = st.mood === "shivering" && Math.sin(now * 38) > 0 ? 0.5 : 0;
             for (var i = 0; i <= N; i++) {
                 var t = -1 + 2 * i / N, x = mx + t * w, env = 1 - t * t;
                 var y = my + E.curve * 7 * env + E.omega * 5 * Math.abs(Math.sin(Math.PI * t)) +
                     E.zig * 3 * (2 * Math.abs(2 * ((t * 3 + z) - Math.floor(t * 3 + z + 0.5))) - 1) + E.wave * 3 * Math.sin(t * 5 + now * 9);
                 top.push([x, y]); bot.push([x, y + E.gape * 9 * Math.pow(env, 0.7)]);
             }
-            ctx.lineWidth = 4; ctx.beginPath();
+            ctx.lineWidth = 5; ctx.beginPath();
             top.forEach(function (p, i) { i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); });
             if (E.gape > 0.06) { for (var j = bot.length - 1; j >= 0; j--) ctx.lineTo(bot[j][0], bot[j][1]); ctx.closePath(); ctx.fill(); }
             ctx.stroke();
@@ -296,9 +302,9 @@ $(function () {
             var keep = {curve: E.curve, w: E.w, cheek: E.cheek, gape: E.gape, omega: E.omega};
             E.curve += QF.curve; E.w = Math.max(4, E.w + QF.w); E.cheek = Math.max(E.cheek, QF.cheek); E.gape = Math.max(E.gape, QF.gape);
             E.omega *= 1 - clamp(QF.gape / 0.4, 0, 1);
-            eye(ctx, cx - 54 * sx, cy - 14 * sy + tl, -1, sx, clamp(open * QF.openL, 0, 1.1), QF.lookY);
-            eye(ctx, cx + 54 * sx, cy - 14 * sy + tr, 1, sx, clamp(open * QF.openR, 0, 1.1), QF.lookY);
-            mouth(ctx, cx, cy + 22 * sy);
+            eye(ctx, cx - 58 * sx, cy - 15 * sy + tl, -1, sx, clamp(open * QF.openL, 0, 1.1), QF.lookY);
+            eye(ctx, cx + 58 * sx, cy - 15 * sy + tr, 1, sx, clamp(open * QF.openR, 0, 1.1), QF.lookY);
+            mouth(ctx, cx, cy + 24 * sy);
             for (var k2 in keep) E[k2] = keep[k2];
             notes.forEach(function (n) { ctx.globalAlpha = clamp(n.life / 0.6, 0, 1); ctx.beginPath(); ctx.ellipse(n.x, n.y, 4, 3, 0, 0, 7); ctx.fill(); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(n.x + 3, n.y); ctx.lineTo(n.x + 3, n.y - 13); ctx.lineTo(n.x + 8, n.y - 9); ctx.stroke(); });
             ctx.globalAlpha = 1;
@@ -310,8 +316,30 @@ $(function () {
             drawHat(ctx, cx, cy - 50 * sy);
             ctx.fillStyle = fc; ctx.strokeStyle = fc;
             if (mood === "heating up") {
-                for (var i = 0; i < 3; i++) { var qq = (now * (0.8 + st.heat) + i / 3) % 1, sx2 = cx + (i - 1) * 26 * sx + Math.sin(now * 3 + i) * 3, sy2 = cy - 52 - qq * 26;
-                    ctx.globalAlpha = Math.sin(qq * Math.PI) * (0.4 + 0.6 * st.heat); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(sx2, sy2); ctx.lineTo(sx2, sy2 - 4 - 6 * st.heat * (1 - qq)); ctx.stroke(); }
+                for (var i = 0; i < 3; i++) { var qq = (now * (0.6 + 0.8 * st.heat) + i / 3) % 1, px2 = cx + (i - 1) * 24 * sx + Math.sin(now * 2.5 + i * 2) * 4 * qq, py2 = cy - 50 - qq * 34;
+                    var rr = (3.5 + 6 * qq) * (0.7 + 0.6 * st.heat);
+                    ctx.globalAlpha = 0.9 * Math.sin(qq * Math.PI) * (0.5 + 0.5 * st.heat);
+                    ctx.beginPath(); ctx.ellipse(px2, py2, rr, rr * 0.85, 0, 0, 7); ctx.fill(); ctx.beginPath(); ctx.ellipse(px2 + rr * 0.7, py2 + rr * 0.3, rr * 0.6, rr * 0.55, 0, 0, 7); ctx.fill(); }
+                ctx.globalAlpha = 1;
+                // heat ring around the edge, filling up with the temperature
+                ctx.lineWidth = 5; ctx.globalAlpha = 0.18; ctx.beginPath(); ctx.arc(120, 120, 116, 0, 7); ctx.stroke();
+                ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.arc(120, 120, 116, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * (st.hf || 0)); ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+            if (st.wx) {   // a little sun after a great day, a rain cloud after a bad one
+                var wx = cx - 64, wy = cy - 66 + Math.sin(now * 1.2) * 2;
+                if (st.wx > 0) { ctx.beginPath(); ctx.arc(wx, wy, 6, 0, 7); ctx.fill(); ctx.lineWidth = 2; for (var k = 0; k < 8; k++) { var an = k * Math.PI / 4 + now * 0.5; ctx.beginPath(); ctx.moveTo(wx + Math.cos(an) * 9, wy + Math.sin(an) * 9); ctx.lineTo(wx + Math.cos(an) * 12, wy + Math.sin(an) * 12); ctx.stroke(); } }
+                else { [[-6, 1, 6], [1, -3, 7], [8, 1, 5]].forEach(function (c) { ctx.beginPath(); ctx.arc(wx + c[0], wy + c[1], c[2], 0, 7); ctx.fill(); });
+                    ctx.lineWidth = 1.8; for (var k2 = 0; k2 < 3; k2++) { var qd = (now * 1.4 + k2 / 3) % 1; ctx.globalAlpha = 1 - qd; ctx.beginPath(); ctx.moveTo(wx - 6 + k2 * 7, wy + 8 + qd * 10); ctx.lineTo(wx - 7 + k2 * 7, wy + 11 + qd * 10); ctx.stroke(); } ctx.globalAlpha = 1; }
+            }
+            if (mood === "sleepy" && moodT > 12) {   // dreaming: a thought bubble with a spool, a boat or a star
+                var bx0 = cx + 62, by0 = cy - 62 + Math.sin(now * 1.5) * 1.5, which = Math.floor(now / 20) % 3;
+                ctx.globalAlpha = clamp((moodT - 12) / 2, 0, 1) * 0.9;
+                ctx.beginPath(); ctx.arc(cx + 36, cy - 34, 2.5, 0, 7); ctx.fill(); ctx.beginPath(); ctx.arc(cx + 46, cy - 44, 3.5, 0, 7); ctx.fill();
+                ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(bx0, by0, 20, 17, 0, 0, 7); ctx.stroke();
+                if (which === 0) { ctx.beginPath(); ctx.arc(bx0, by0, 10, 0, 7); ctx.fill(); ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(bx0, by0, 3, 0, 7); ctx.fill(); ctx.fillStyle = fc; }
+                else if (which === 1) { ctx.beginPath(); ctx.moveTo(bx0 - 11, by0 + 1); ctx.lineTo(bx0 + 11, by0 + 1); ctx.lineTo(bx0 + 7, by0 + 7); ctx.lineTo(bx0 - 7, by0 + 7); ctx.fill(); ctx.fillRect(bx0 - 4, by0 - 6, 7, 7); }
+                else { ctx.beginPath(); for (var s5 = 0; s5 <= 5; s5++) { var a5 = -Math.PI / 2 + s5 * 4 * Math.PI / 5; ctx[s5 ? "lineTo" : "moveTo"](bx0 + Math.cos(a5) * 10, by0 + Math.sin(a5) * 10); } ctx.stroke(); }
                 ctx.globalAlpha = 1;
             }
             if (mood === "sleepy") { ctx.font = "700 16px sans-serif"; for (var z = 0; z < 3; z++) { var zz = (now * 0.45 + z / 3) % 1; ctx.globalAlpha = Math.sin(zz * Math.PI) * clamp(moodT / 1.5, 0, 1); ctx.fillText("z", 160 + zz * 26, 96 - zz * 36); } ctx.globalAlpha = 1; }
