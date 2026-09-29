@@ -13,6 +13,7 @@
   - commands OctoPrint sends (`G28`, `QUAD_GANTRY_LEVEL`, `BED_MESH_CALIBRATE`, `M109`/`M190`, `SHAPER_CALIBRATE`, `PID_CALIBRATE`, `CLEAN_NOZZLE`, `LOAD_FILAMENT`, `PAUSE`/`M600`, and so on)
   - `// KNOMI <flag>=1` lines from your Klipper macros, so steps inside `PRINT_START` show up too ([`knomi_octoprint.cfg`](knomi_octoprint.cfg))
   - `// action:paused` / `// action:resumed`
+- **Signals for Coaster, the KNOMI firmware's mascot:** filament runout (`M600` or a runout message), the part cooling fan speed (`M106`/`M107`) and the speed factor (`M220`), so it can look hungry, squint into the wind or hang on.
 - **Instant updates.** Changes are pushed to the KNOMI over OctoPrint's websocket.
 - **Bluetooth LE link (optional).** The plugin connects to the KNOMI 2 directly, pushes status and the file list, and runs the KNOMI's touchscreen buttons inside OctoPrint. No API key, and the KNOMI can even run with WiFi off.
 - No G28 or bed-mesh macro overrides are needed, so it avoids the "Macro G28 called recursively" and KAMP problems of the stock KNOMI macros.
@@ -50,7 +51,7 @@ Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Blu
 
 **Does it work with OctoKlipper?** Yes, that's the tested setup: OctoPrint + OctoKlipper on a Raspberry Pi 5.
 
-**What's the API endpoint?** `GET /api/plugin/knomi` returns the status flags (`homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`). Changes are also sent as plugin messages on the websocket.
+**What's the API endpoint?** `GET /api/plugin/knomi` returns the status flags (`homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`, `runout`) plus `fan` (part cooling fan %) and `speed` (speed factor %). Changes are also sent as plugin messages on the websocket.
 
 ## License
 

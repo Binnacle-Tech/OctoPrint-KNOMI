@@ -28,7 +28,7 @@ GCODE_PREFIX = "/printer/gcode/script?script="
 PRINT_PREFIX = "/printer/print/start?filename="
 
 FLAGS = ("homing", "probing", "qgling", "heating_nozzle", "heating_bed",
-         "shaping", "pid_tuning", "cleaning", "filament", "paused")
+         "shaping", "pid_tuning", "cleaning", "filament", "paused", "runout")
 
 COMMAND_FLAGS = {
     "G28": "homing",
@@ -62,6 +62,9 @@ COMMAND_FLAGS = {
 PAUSE_COMMANDS = {"PAUSE", "M600", "M601", "M0", "M1"}
 RESUME_COMMANDS = {"RESUME", "M602", "M108", "CANCEL_PRINT"}
 PAUSE_ACTIONS = ("action:paused", "action:pause")
+# "runout" is sticky like "paused": out of filament until the print resumes or ends
+RUNOUT_COMMANDS = {"M600"}
+RUNOUT_WORDS = ("runout", "filament_runout", "out of filament")
 RESUME_ACTIONS = ("action:resumed", "action:resume", "action:cancel")
 
 # Safety net: a flag from a sent command never outlives this (missed "ok")
@@ -83,6 +86,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._lock = threading.Lock()
         self._cmd_flags = {}                     # flag -> time raised
         self._marker_flags = dict.fromkeys(FLAGS, False)
+        self._fan = 0        # part cooling fan, % (M106/M107)
+        self._speed = 100    # speed factor, % (M220)
         self._last_pushed = None
         self._ble = None
 
@@ -106,6 +111,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         with self._lock:
             self._cmd_flags.clear()
             self._marker_flags = dict.fromkeys(FLAGS, False)
+            self._fan = 0
+            self._speed = 100
         self._push()
 
     def _push(self):
@@ -126,6 +133,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 if now - since > COMMAND_FLAG_TIMEOUT:
                     del self._cmd_flags[flag]
             status = {f: bool(f in self._cmd_flags or self._marker_flags[f]) for f in FLAGS}
+        status["fan"] = self._fan
+        status["speed"] = self._speed
         # tells the KNOMI which progress OctoPrint's dashboard shows
         status["time_progress"] = self._time_progress()
         return status
@@ -142,10 +151,46 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def _set_paused(self, value):
         with self._lock:
             self._marker_flags["paused"] = value
+            if not value:
+                self._marker_flags["runout"] = False
         self._push()
 
+    def _set_runout(self):
+        with self._lock:
+            self._marker_flags["runout"] = True
+        self._push()
+
+    def _track_fan_speed(self, parts):
+        """Part fan from M106/M107 (fan 0 only), speed factor from M220."""
+        word = parts[0]
+        args = {p[0]: p[1:] for p in parts[1:] if len(p) > 1}
+        changed = False
+        with self._lock:
+            if word == "M106" and args.get("P", "0") == "0":
+                try:
+                    self._fan = max(0, min(100, round(float(args.get("S", "255")) * 100 / 255)))
+                    changed = True
+                except ValueError:
+                    pass
+            elif word == "M107" and args.get("P", "0") == "0":
+                self._fan = 0
+                changed = True
+            elif word == "M220" and "S" in args:
+                try:
+                    self._speed = max(1, min(999, round(float(args["S"]))))
+                    changed = True
+                except ValueError:
+                    pass
+        if changed:
+            self._push()
+
     def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
-        word = cmd.strip().upper().split()[0] if cmd.strip() else ""
+        parts = cmd.strip().upper().split()
+        word = parts[0] if parts else ""
+        if word in ("M106", "M107", "M220"):
+            self._track_fan_speed(parts)
+        if word in RUNOUT_COMMANDS:
+            self._set_runout()
         if word in PAUSE_COMMANDS:
             self._set_paused(True)
         elif word in RESUME_COMMANDS:
@@ -165,8 +210,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 with self._lock:
                     self._cmd_flags.clear()
                 self._push()
-        elif "action:" in stripped:
+        elif "action:" in stripped or "runout" in stripped.lower():
             low = stripped.lower()
+            if any(w in low for w in RUNOUT_WORDS):
+                self._set_runout()
             if any(a in low for a in PAUSE_ACTIONS):
                 self._set_paused(True)
             elif any(a in low for a in RESUME_ACTIONS):
@@ -245,6 +292,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                      Events.PRINT_CANCELLED, Events.PRINT_FAILED):
             self._reset()
         elif event in (Events.PRINT_RESUMED, Events.PRINT_STARTED, Events.PRINT_DONE):
+            if event != Events.PRINT_RESUMED:
+                with self._lock:
+                    self._speed = 100
             self._set_paused(False)
 
     # ---- API -------------------------------------------------------------
@@ -306,6 +356,8 @@ def build_ble_status(data, temps, knomi_flags, tool="tool0", wifi=False, time_ba
         "nt": [r(t.get("actual")), r(t.get("target"))],
         "bt": [r(b.get("actual")), r(b.get("target"))],
         "k": sum(1 << i for i, f in enumerate(FLAGS) if knomi_flags.get(f)),
+        "f": int(knomi_flags.get("fan", 0)),
+        "sp": int(knomi_flags.get("speed", 100)),
     }
     if data.get("currentZ") is not None:
         status["z"] = int(round(data["currentZ"] * 1000))
