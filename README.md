@@ -15,7 +15,8 @@
   - `// action:paused` / `// action:resumed`
 - **Signals for Coaster, the KNOMI firmware's mascot:** filament runout (`M600` or a runout message), the part cooling fan speed (`M106`/`M107`) and the speed factor (`M220`), so it can look hungry, squint into the wind or hang on.
 - **Display messages.** `M117`, `SET_DISPLAY_TEXT MSG=…` and `// action:notification` lines are passed to the KNOMI, where Coaster says them in a speech bubble (also available as `{msg}` in the print screen designer).
-- **Coaster in your OctoPrint sidebar.** A live mirror of the KNOMI's Coaster: its mood, seasonal hat and the last print's report card (screams, peak g, dizzy spells). Needs KNOMI firmware OP16 or newer.
+- **Coaster in your OctoPrint sidebar.** A live mirror of the KNOMI's Coaster: its mood, how it's feeling, its seasonal hat and the last print's report card (screams, peak g, dizzy spells). Needs KNOMI firmware OP16 or newer (feelings: OP23).
+- **Current layer and Z for the KNOMI.** OctoPrint doesn't report layers, so the plugin reads the file being printed, finds where each layer starts (slicer layer comments, or Z moves followed by extrusion) and follows OctoPrint's file position, the same way the G-code viewer does. This drives the KNOMI's layer triggers, `{layer}` and `{z}`. Files printed from OctoPrint's own storage only. Needs KNOMI firmware OP20 or newer.
 - **Instant updates.** Changes are pushed to the KNOMI over OctoPrint's websocket.
 - **Bluetooth LE link (optional).** The plugin connects to the KNOMI 2 directly, pushes status and the file list, and runs the KNOMI's touchscreen buttons inside OctoPrint. No API key, and the KNOMI can even run with WiFi off.
 - No G28 or bed-mesh macro overrides are needed, so it avoids the "Macro G28 called recursively" and KAMP problems of the stock KNOMI macros.
@@ -53,7 +54,7 @@ Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Blu
 
 **Does it work with OctoKlipper?** Yes, that's the tested setup: OctoPrint + OctoKlipper on a Raspberry Pi 5.
 
-**What's the API endpoint?** `GET /api/plugin/knomi` returns the status flags (`homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`, `runout`) plus `fan` (part cooling fan %) and `speed` (speed factor %). Changes are also sent as plugin messages on the websocket.
+**What's the API endpoint?** `GET /api/plugin/knomi` returns the status flags (`homing`, `probing`, `qgling`, `heating_nozzle`, `heating_bed`, `shaping`, `pid_tuning`, `cleaning`, `filament`, `paused`, `runout`) plus `fan` (part cooling fan %), `speed` (speed factor %), `msg`/`msg_id` (last display message) and, during a print, `layer`, `layers` and `z` (µm). Changes are also sent as plugin messages on the websocket.
 
 ## License
 
