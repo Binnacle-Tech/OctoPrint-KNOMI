@@ -107,7 +107,14 @@
     </div>
   </div>
   <div class="control-group">
-    <label class="control-label">KNOMI address</label>
+    <label class="control-label">KNOMI WiFi IP</label>
+    <div class="controls">
+      <input type="text" class="input-medium" placeholder="learned automatically" data-bind="value: settings.settings.plugins.knomi.knomi_ip">
+      <span class="help-block">Where the KNOMI's own pages are fetched over WiFi. Learned automatically; set it by hand if they won't open while the KNOMI's WiFi is on.</span>
+    </div>
+  </div>
+  <div class="control-group">
+    <label class="control-label">Bluetooth address</label>
     <div class="controls">
       <input type="text" class="input-medium" placeholder="set by pairing" data-bind="value: settings.settings.plugins.knomi.ble_address">
       <span class="help-block">Filled in when you pair. Only change it if you know what you're doing.</span>

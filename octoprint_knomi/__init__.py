@@ -387,7 +387,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     # ---- settings / lifecycle --------------------------------------------
 
     def get_settings_defaults(self):
-        return {"ble_enabled": False, "ble_address": "", "tool": "tool0"}
+        return {"ble_enabled": False, "ble_address": "", "tool": "tool0",
+                "knomi_ip": ""}   # last WiFi address the KNOMI had (kept across restarts, for its pages)
 
     def is_template_autoescaped(self):
         return True
@@ -502,6 +503,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         """The KNOMI reports Coaster's mood, quirk, feeling, decorations, head motion and last report card."""
         if data.get("fw"):
             self._knomi["fw"] = str(data["fw"])[:24]
+        ip = str(data.get("ip") or "")
+        if ip and re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):   # sent by OP41+, also over Bluetooth
+            self._remember_ip(ip)
         def num(k, lo, hi):
             try:
                 return max(lo, min(hi, float(data.get(k, 0) or 0)))
@@ -530,6 +534,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_api_command(self, command, data):
         if command == "coaster":
             self._knomi.update(ip=flask.request.remote_addr or "", seen=time.time(), via="WiFi")
+            self._remember_ip(flask.request.remote_addr or "")
             self._wifi_seen = time.time()
             self.coaster_update(data)
             return flask.jsonify(ok=True, watch=self.coaster_watched())
@@ -615,22 +620,40 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             content = inject_proxy_script(content, via)
         return flask.Response(content, status=status, headers=out_headers)
 
+    def _remember_ip(self, ip):
+        if not ip:
+            return
+        self._knomi["ip"] = ip
+        if self._settings.get(["knomi_ip"]) != ip:
+            self._settings.set(["knomi_ip"], ip)
+            self._settings.save()
+
     def _knomi_fetch(self, method, target, ctype, body):
         """(status, headers, body, "WiFi"/"Bluetooth") from the KNOMI."""
-        ip = self._knomi.get("ip")
+        ip = self._knomi.get("ip") or self._settings.get(["knomi_ip"])
         now = time.time()
-        if ip and now - self._wifi_seen < 120 and now - self._wifi_failed > 30:
+        tried = []
+        if ip and now - self._wifi_failed > 30:
             import requests
             try:
                 r = requests.request(method, "http://{}{}".format(ip, target), data=body or None,
                                      headers={"Content-Type": ctype} if ctype else {},
                                      timeout=(2, 60 + len(body) / 50000.0), allow_redirects=False)
                 return r.status_code, list(r.headers.items()), r.content, "WiFi"
-            except requests.RequestException:
+            except requests.RequestException as e:
                 self._wifi_failed = now   # WiFi is probably off: Bluetooth for a while
+                tried.append("WiFi ({}): {}".format(ip, e.__class__.__name__))
+        elif not ip:
+            tried.append("WiFi: the KNOMI's address isn't known yet")
+        else:
+            tried.append("WiFi ({}): didn't answer a moment ago".format(ip))
         if not self._ble or not self._ble.tunnel_ready():
-            raise IOError("The KNOMI isn't reachable: not over WiFi, and not connected over Bluetooth "
-                          "(needs firmware OP41 or newer and the Bluetooth link on).")
+            if not self._ble or self._ble.state != "connected":
+                tried.append("Bluetooth: the link isn't connected")
+            else:
+                tried.append("Bluetooth: connected, but the KNOMI doesn't offer its pages (firmware older than "
+                             "OP41, or the Pi still has its old list of Bluetooth features; it reconnects to refresh)")
+            raise IOError(" · ".join(tried))
         key = (self._knomi.get("fw"), target)
         if method == "GET" and key in self._page_cache:
             return self._page_cache[key] + ("Bluetooth",)
@@ -670,6 +693,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         # the KNOMI polls this over WiFi (its HTTP client says ESP32): that counts as checking in
         if "ESP32" in (request.headers.get("User-Agent") or ""):
             self._knomi.update(ip=request.remote_addr or "", seen=time.time(), via="WiFi")
+            self._remember_ip(request.remote_addr or "")
             self._wifi_seen = time.time()
         result = self._status()
         result["coaster"] = self._coaster

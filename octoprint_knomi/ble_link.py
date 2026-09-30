@@ -88,6 +88,8 @@ class BleLink:
         self._tun_lock = None
         self._tun_id = 0
         self._tun = None
+        self._tun_refreshed = False   # reconnected once already to find the tunnel
+        self._refresh_at = 0
         self._wifi_request = False
         self._files_dirty = True
         self.state = "off"
@@ -198,6 +200,11 @@ class BleLink:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
+                    elif not self._tun_refreshed:
+                        # BlueZ keeps a paired device's list of characteristics; after a firmware update that
+                        # added one, the KNOMI says so (OP41+) and BlueZ looks again: reconnect once to use it
+                        self._tun_refreshed = True
+                        self._refresh_at = time.monotonic() + 8
                     self.state = "connected"
                     self.last_error = ""
                     self._files_dirty = True
@@ -205,6 +212,10 @@ class BleLink:
                     self._plugin.ble_remember_address(address)
                     last, last_t = None, 0.0
                     while not self._halted() and not gone.is_set():
+                        if self._refresh_at and time.monotonic() > self._refresh_at:
+                            self._refresh_at = 0
+                            self._logger.info("KNOMI BLE: reconnecting to pick up the KNOMI's page tunnel")
+                            break
                         if self._files_dirty:
                             self._files_dirty = False
                             await self._send_files(client)
