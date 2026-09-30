@@ -21,9 +21,11 @@ def _dev_path(address, adapter="hci0"):
 
 
 class Pairer:
-    def __init__(self, logger, on_paired):
+    def __init__(self, logger, on_paired, on_done=None):
         self._logger = logger
         self._on_paired = on_paired        # called with the address when pairing worked
+        self._on_done = on_done            # called with True/False when a pairing attempt ends, any way
+        self._cancelled = False
         self._lock = threading.Lock()
         self._thread = None
         self._loop = None
@@ -46,8 +48,11 @@ class Pairer:
         return self._start(self._scan())
 
     def pair(self, address):
+        if self.busy():
+            return False
         self.target = address.upper()
-        return self._start(self._pair(self.target))
+        self._cancelled = False
+        return self._start(self._pair(self.target), done=True)
 
     def forget(self, address):
         return self._start(self._forget(address.upper()))
@@ -61,6 +66,7 @@ class Pairer:
         return True
 
     def cancel(self):
+        self._cancelled = True   # the pairing thread checks this between steps
         if self._loop and self._code_future:
             fut = self._code_future
             self._loop.call_soon_threadsafe(lambda: fut.done() or fut.cancel())
@@ -72,7 +78,7 @@ class Pairer:
         with self._lock:
             self.status, self.message = status, message
 
-    def _start(self, coro):
+    def _start(self, coro, done=False):
         if self.busy():
             coro.close()
             return False
@@ -80,8 +86,11 @@ class Pairer:
         def run():
             loop = asyncio.new_event_loop()
             self._loop = loop
+            ok = False
             try:
-                loop.run_until_complete(coro)
+                ok = bool(loop.run_until_complete(coro))
+            except asyncio.CancelledError:
+                pass
             except Exception as e:  # pragma: no cover
                 self._logger.exception("KNOMI pairing failed")
                 self._set("error", str(e) or e.__class__.__name__)
@@ -89,6 +98,11 @@ class Pairer:
                 self._code_future = None
                 self._loop = None
                 loop.close()
+                if done and self._on_done:
+                    try:
+                        self._on_done(ok)
+                    except Exception:  # pragma: no cover
+                        self._logger.exception("KNOMI pairing: done callback failed")
 
         self._thread = threading.Thread(target=run, name="knomi-pair", daemon=True)
         self._thread.start()
@@ -215,6 +229,8 @@ class Pairer:
             await adapter.call_start_discovery()
             path = None
             for _ in range(30):
+                if self._cancelled:
+                    return False
                 known = await self._paired_addresses(bus)
                 if address in known:
                     path = known[address]["path"]
@@ -231,6 +247,8 @@ class Pairer:
             dev_obj = bus.get_proxy_object(BLUEZ, path, await bus.introspect(BLUEZ, path))
             device = dev_obj.get_interface("org.bluez.Device1")
             props = dev_obj.get_interface("org.freedesktop.DBus.Properties")
+            if self._cancelled:
+                return False
             self._set("pairing", "Pairing... the KNOMI will show a code.")
             try:
                 await asyncio.wait_for(device.call_pair(), timeout=120)
@@ -246,6 +264,8 @@ class Pairer:
                 if msg:
                     self._set("error", "Pairing failed: " + msg)
                     return
+            if self._cancelled:
+                return False
             await props.call_set("org.bluez.Device1", "Trusted", Variant("b", True))
             try:
                 await device.call_disconnect()   # let the plugin's link connect fresh
@@ -254,6 +274,7 @@ class Pairer:
             self._set("done", "Paired with the KNOMI. Connecting...")
             self._logger.info("KNOMI BLE: paired with %s", address)
             self._on_paired(address)
+            return True
         finally:
             try:
                 await manager.call_unregister_agent(AGENT_PATH)

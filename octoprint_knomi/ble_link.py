@@ -76,6 +76,10 @@ class BleLink:
         self._logger = logger
         self._thread = None
         self._stop = threading.Event()
+        # Each start() is a new generation; a thread from an older one (still stuck in a 20 s connect when
+        # stop() gave up waiting) sees it has been replaced and quits instead of fighting the new one.
+        self._gen = 0
+        self._local = threading.local()
         self._wifi_request = False
         self._files_dirty = True
         self.state = "off"
@@ -86,17 +90,19 @@ class BleLink:
     # ---- control (any thread) ----------------------------------------
 
     def start(self):
-        if self._thread and self._thread.is_alive():
+        if self._thread and self._thread.is_alive() and not self._stop.is_set():
             return
+        self._gen += 1
         self._stop.clear()
         self.state = "starting"
-        self._thread = threading.Thread(target=self._run, name="knomi-ble", daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(self._gen,), name="knomi-ble", daemon=True)
         self._thread.start()
 
     def stop(self):
         self._stop.set()
+        self._gen += 1   # whatever is running now is done, even if it doesn't notice within the join
         if self._thread:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=2)
         self._thread = None
         self.state = "off"
         self.last_error = ""
@@ -109,13 +115,18 @@ class BleLink:
 
     # ---- link thread ------------------------------------------------------
 
-    def _run(self):
+    def _halted(self):
+        return self._stop.is_set() or getattr(self._local, "gen", None) != self._gen
+
+    def _run(self, gen):
+        self._local.gen = gen
         try:
             asyncio.run(self._main())
         except Exception as e:  # pragma: no cover
             self._logger.exception("KNOMI BLE thread died")
-            self.last_error = str(e)
-            self.state = "error"
+            if not self._halted():
+                self.last_error = str(e)
+                self.state = "error"
 
     async def _find(self):
         from bleak import BleakScanner
@@ -155,7 +166,7 @@ class BleLink:
             self.last_error = "bleak is not installed"
             return
 
-        while not self._stop.is_set():
+        while not self._halted():
             try:
                 address = self._plugin.ble_configured_address() or await self._find()
                 if not address:
@@ -180,13 +191,17 @@ class BleLink:
                     self._logger.info("KNOMI BLE connected to %s", address)
                     self._plugin.ble_remember_address(address)
                     last, last_t = None, 0.0
-                    while not self._stop.is_set() and not gone.is_set():
+                    while not self._halted() and not gone.is_set():
                         if self._files_dirty:
                             self._files_dirty = False
                             await self._send_files(client)
                         wifi = self._wifi_request
                         self._wifi_request = False
-                        payload = json.dumps(self._plugin.ble_status(wifi=wifi), separators=(",", ":")).encode()
+                        st = self._plugin.ble_status(wifi=wifi)
+                        payload = json.dumps(st, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                        while len(payload) > 500 and st.get("m"):   # one BLE write holds 512 bytes: shorten the message
+                            st["m"] = st["m"][:-8]
+                            payload = json.dumps(st, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
                         now = time.monotonic()
                         if payload != last or now - last_t >= HEARTBEAT_S or wifi:
                             await client.write_gatt_char(STATUS_UUID, payload, response=True)
@@ -206,12 +221,13 @@ class BleLink:
                     msg += " (pair once with bluetoothctl; the KNOMI shows the code)"
                 self.last_error = msg
                 self._logger.info("KNOMI BLE: %s", msg)
-            if not self._stop.is_set():
+            if not self._halted():
                 self.state = "disconnected"
                 await self._sleep(RETRY_S)
-        self.state = "off"
+        if getattr(self._local, "gen", None) == self._gen:
+            self.state = "off"
 
     async def _sleep(self, seconds):
         end = time.monotonic() + seconds
-        while not self._stop.is_set() and time.monotonic() < end:
+        while not self._halted() and time.monotonic() < end:
             await asyncio.sleep(0.25)

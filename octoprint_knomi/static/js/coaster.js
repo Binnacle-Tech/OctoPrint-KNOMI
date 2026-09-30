@@ -33,7 +33,7 @@ $(function () {
             self.seen(true);
             if (c.mood !== st.mood) { moodT = 0; if (c.mood === "celebrate") spawnConfetti(); }
             if (c.q && c.q !== Q.name && QDUR[c.q]) { Q.name = c.q; Q.t = 0; Q.fired = {}; Q.side = c.qs || 1; }
-            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat", "hf", "wx", "sig"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
+            ["mood", "h", "pr", "deco", "lights", "anim", "shades", "c", "act", "heat", "hat", "hf", "wx", "sig", "south"].forEach(function (k) { if (c[k] !== undefined) st[k] = c[k]; });
             if (c.hx !== undefined) { st.hx = c.hx; st.hy = c.hy; st.hs = c.hs; st.px = c.px; st.py = c.py; st.look = c.look; st.live = true; st.liveAt = Date.now(); }
             self.moodLabel((c.mood === "whee" ? "Whee!" : "Coaster is " + c.mood) + (c.feel ? " · feeling " + c.feel : ""));
             self.saying(c.say ? "\u201C" + c.say + "\u201D" : c.mu ? "(" + c.mu + ")" : "");

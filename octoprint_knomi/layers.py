@@ -74,7 +74,12 @@ def scan(path):
     with open(path, "rb") as f:
         for raw in f:
             line_start = offset
-            offset += len(raw)
+            try:
+                offset += len(raw) if raw.isascii() else len(raw.decode("utf-8").encode("utf-8"))
+            except UnicodeDecodeError:
+                # OctoPrint reads with errors="replace" and counts the re-encoded length, so each bad
+                # byte counts as 3; count it the same way or the layer runs ahead of the print
+                offset += len(raw.decode("utf-8", errors="replace").encode("utf-8"))
             line = raw.decode("utf-8", errors="ignore").strip()
             if not line:
                 continue

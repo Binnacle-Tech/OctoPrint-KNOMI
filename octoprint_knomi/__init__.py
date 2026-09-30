@@ -101,6 +101,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._last_pushed = None
         self._ble = None
         self._layer_map = None   # layers.LayerMap of the file being printed
+        self._layer_job = 0      # which print a layer scan belongs to
+        self._push_lock = threading.RLock()
         self._layer = (0, None)  # (layer, Z mm) at OctoPrint's file position
         self._layer_timer = None
 
@@ -130,14 +132,15 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def _push(self):
         """Send status to websocket clients (the KNOMI) when it changed."""
-        status = self._status()
-        if status == self._last_pushed:
-            return
-        self._last_pushed = status
-        try:
-            self._plugin_manager.send_plugin_message(self._identifier, status)
-        except Exception:
-            self._logger.exception("Could not push KNOMI status")
+        with self._push_lock:   # called from the comm, event, timer and BLE threads
+            status = self._status()
+            if status == self._last_pushed:
+                return
+            self._last_pushed = status
+            try:
+                self._plugin_manager.send_plugin_message(self._identifier, status)
+            except Exception:
+                self._logger.exception("Could not push KNOMI status")
 
     def _status(self):
         now = time.monotonic()
@@ -166,6 +169,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def _start_layer_tracking(self, payload):
         self._stop_layer_tracking()
+        self._layer_job += 1
+        job = self._layer_job
         origin, path = payload.get("origin"), payload.get("path")
         if origin != "local" or not path:
             self._logger.info("KNOMI: no layer tracking for %s files", origin)
@@ -181,7 +186,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 t0 = time.monotonic()
                 lm = layers.scan(disk)
                 self._logger.info("KNOMI: %s has %d layers (scanned in %.1f s)", path, lm.total, time.monotonic() - t0)
-                self._layer_map = lm
+                if job == self._layer_job:   # still the same print (a cancelled one's scan can finish late)
+                    self._layer_map = lm
             except Exception:
                 self._logger.exception("KNOMI: couldn't scan %s for layers", path)
 
@@ -191,6 +197,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._layer_timer.start()
 
     def _stop_layer_tracking(self):
+        self._layer_job += 1
         if self._layer_timer:
             self._layer_timer.cancel()
             self._layer_timer = None
@@ -335,7 +342,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def on_after_startup(self):
         self._ble = BleLink(self, self._logger)
-        self._pairer = Pairer(self._logger, self._on_paired)
+        self._pairer = Pairer(self._logger, self._on_paired, self._on_pair_done)
         if self._settings.get_boolean(["ble_enabled"]):
             self._ble.start()
         # OctoPrint restarted mid-print: pick the layers up again
@@ -422,6 +429,11 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._ble.stop()
             self._ble.start()
 
+    def _on_pair_done(self, ok):
+        """A pairing attempt ended (pairing thread). If it didn't work, bring the link back as it was."""
+        if not ok and self._ble and self._settings.get_boolean(["ble_enabled"]):
+            self._ble.start()
+
     def coaster_watched(self):
         """Someone has the sidebar open: the KNOMI then sends head motion ~3x a second."""
         return time.monotonic() < self._coaster_watch_until
@@ -470,14 +482,20 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         if command == "ble_scan" and self._pairer:
             return flask.jsonify(ok=self._pairer.scan())
         if command == "ble_pair" and self._pairer:
+            if self._pairer.busy():
+                return flask.jsonify(ok=False)
             if self._ble:
-                self._ble.stop()   # the link would get in the way of pairing
-            return flask.jsonify(ok=self._pairer.pair(str(data.get("address", ""))))
+                self._ble.stop()   # the link would get in the way of pairing; _on_pair_done restarts it if it fails
+            ok = self._pairer.pair(str(data.get("address", "")))
+            if not ok and self._ble and self._settings.get_boolean(["ble_enabled"]):
+                self._ble.start()
+            return flask.jsonify(ok=ok)
         if command == "ble_code" and self._pairer:
             return flask.jsonify(ok=self._pairer.code(data.get("code", "")))
         if command == "ble_cancel" and self._pairer:
-            self._pairer.cancel()
-            if self._ble and self._settings.get_boolean(["ble_enabled"]):
+            busy = self._pairer.busy()
+            self._pairer.cancel()   # a running attempt stops and restarts the link itself (_on_pair_done)
+            if not busy and self._ble and self._settings.get_boolean(["ble_enabled"]):
                 self._ble.start()
             return flask.jsonify(ok=True)
         if command == "ble_forget" and self._pairer:
