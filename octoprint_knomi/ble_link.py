@@ -43,6 +43,18 @@ def encode_files(paths):
     return frames
 
 
+def bluez_device(address):
+    """A bleak device for a KNOMI BlueZ already knows (paired), so bleak doesn't have to see it
+    advertise first. On BlueZ, bleak connects straight to the D-Bus object path."""
+    from bleak.backends.device import BLEDevice
+    details = {"path": "/org/bluez/hci0/dev_" + address.upper().replace(":", "_"),
+               "props": {"Alias": "KNOMI", "Adapter": "/org/bluez/hci0", "Address": address.upper()}}
+    try:
+        return BLEDevice(address, "KNOMI", details)
+    except TypeError:   # older bleak also wants an RSSI
+        return BLEDevice(address, "KNOMI", details, -60)
+
+
 def paired_knomi():
     """Address of a KNOMI the Pi has already paired with (bluetoothctl), or None."""
     import subprocess
@@ -69,6 +81,7 @@ class BleLink:
         self.state = "off"
         self.address = ""
         self.last_error = ""
+        self._use_path = False
 
     # ---- control (any thread) ----------------------------------------
 
@@ -155,7 +168,10 @@ class BleLink:
                 self.address = address
                 gone = asyncio.Event()
                 loop = asyncio.get_running_loop()
-                async with BleakClient(address, timeout=20.0,
+                # a KNOMI that's already connected (bluetoothctl) doesn't advertise, and bleak won't
+                # connect to an address it hasn't seen; point it at the paired device instead
+                target = bluez_device(address) if self._use_path else address
+                async with BleakClient(target, timeout=20.0,
                                        disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
                     await client.start_notify(CMD_UUID, self._on_cmd)
                     self.state = "connected"
@@ -182,6 +198,10 @@ class BleLink:
                 self._logger.info("KNOMI BLE: %s", msg)
             except Exception as e:
                 msg = str(e) or e.__class__.__name__
+                if "not found" in msg.lower() and not self._use_path:
+                    self._use_path = True   # try the paired device directly, right away
+                    self._logger.info("KNOMI BLE: %s, trying the paired device directly", msg)
+                    continue
                 if "auth" in msg.lower() or "encrypt" in msg.lower() or "not paired" in msg.lower():
                     msg += " (pair once with bluetoothctl; the KNOMI shows the code)"
                 self.last_error = msg
