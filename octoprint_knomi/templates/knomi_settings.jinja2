@@ -1,46 +1,109 @@
+<div id="knomi_settings_ui">
 <h3>KNOMI</h3>
-<p>Status for the KNOMI display. Over WiFi the KNOMI reads it from the API. Over Bluetooth this plugin pushes it.</p>
+
+<div class="well well-small" style="margin-bottom:14px">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px">
+    <span class="label" data-bind="css: knomiBadge, text: knomiStateText"></span>
+    <span data-bind="text: knomiDetail"></span>
+    <span style="flex:1"></span>
+    <a class="btn btn-small" target="_blank" rel="noopener" data-bind="visible: knomiUrl, attr: {href: knomiUrl}"><i class="fa fa-external-link"></i> KNOMI settings</a>
+    <a class="btn btn-small" target="_blank" rel="noopener" data-bind="visible: knomiUrl, attr: {href: knomiUrl() + 'coaster'}"><i class="fa fa-smile-o"></i> Coaster</a>
+  </div>
+  <div class="muted" style="margin-top:6px" data-bind="text: coasterLine, visible: coasterLine"></div>
+</div>
 
 <form class="form-horizontal" onsubmit="return false;">
+  <legend>Bluetooth</legend>
+  <p class="muted">Optional. Over Bluetooth the KNOMI works without WiFi and without an API key; the plugin sends it everything.</p>
+
+  <div class="control-group">
+    <div class="controls">
+      <label class="checkbox"><input type="checkbox" data-bind="checked: settings.settings.plugins.knomi.ble_enabled"> Connect to the KNOMI over Bluetooth</label>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <label class="control-label">Link</label>
+    <div class="controls" style="padding-top:5px">
+      <span class="label" data-bind="css: bleBadge, text: bleStateText"></span>
+      <span data-bind="text: bleDetail"></span>
+    </div>
+  </div>
+
+  <!-- pairing: find, pick, type the code -->
+  <div class="control-group">
+    <label class="control-label">Pairing</label>
+    <div class="controls">
+      <div data-bind="visible: !pairBusy()">
+        <button class="btn" data-bind="click: scan"><i class="fa fa-search"></i> Find KNOMI</button>
+        <button class="btn" data-bind="click: reconnect, visible: bleAddress"><i class="fa fa-refresh"></i> Reconnect</button>
+        <button class="btn btn-danger" data-bind="click: forget, visible: bleAddress"><i class="fa fa-unlink"></i> Forget</button>
+        <span class="help-block">First turn Bluetooth on in the KNOMI's own settings (it restarts). Then Find KNOMI, pick it, and type the code it shows.</span>
+      </div>
+
+      <div data-bind="visible: pairStatus() === 'scanning' || pairStatus() === 'pairing'" style="padding-top:5px">
+        <i class="fa fa-spinner fa-spin"></i> <span data-bind="text: pairMessage"></span>
+      </div>
+
+      <table class="table table-condensed" style="margin-top:8px;max-width:520px" data-bind="visible: pairStatus() === 'found' && found().length">
+        <tbody data-bind="foreach: found">
+          <tr>
+            <td><b data-bind="text: name"></b><br><small class="muted" data-bind="text: address"></small></td>
+            <td style="vertical-align:middle"><span class="muted" data-bind="text: $parent.signal(rssi)"></span></td>
+            <td style="vertical-align:middle"><span class="label label-success" data-bind="visible: paired">paired</span></td>
+            <td style="text-align:right;vertical-align:middle"><button class="btn btn-primary btn-small" data-bind="click: $parent.pair">Pair</button></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div data-bind="visible: pairStatus() === 'code'" class="alert alert-info" style="max-width:480px;margin-top:8px">
+        <p><b>Type the 6-digit code the KNOMI is showing.</b></p>
+        <div class="input-append">
+          <input type="text" inputmode="numeric" maxlength="6" class="input-small" placeholder="123456"
+                 style="font-size:20px;letter-spacing:4px;height:28px" data-bind="value: code, valueUpdate: 'input', event: {keyup: codeKey}">
+          <button class="btn btn-primary" style="height:38px" data-bind="click: sendCode, enable: code().length === 6">Pair</button>
+        </div>
+        <button class="btn btn-link" data-bind="click: cancel">Cancel</button>
+      </div>
+
+      <div data-bind="visible: pairStatus() === 'done'" class="alert alert-success" style="max-width:480px;margin-top:8px">
+        <i class="fa fa-check"></i> <span data-bind="text: pairMessage"></span>
+      </div>
+      <div data-bind="visible: pairStatus() === 'error'" class="alert alert-error" style="max-width:480px;margin-top:8px">
+        <span data-bind="text: pairMessage"></span>
+      </div>
+      <div class="muted" style="margin-top:8px" data-bind="visible: pairStatus() === 'idle' && pairMessage(), text: pairMessage"></div>
+    </div>
+  </div>
+
+  <div class="control-group" data-bind="visible: bleConnected">
+    <div class="controls">
+      <button class="btn" data-bind="click: wifiOn"><i class="fa fa-wifi"></i> Turn KNOMI WiFi on for 10 minutes</button>
+      <span class="help-block">If the KNOMI switched its WiFi off while on Bluetooth, this brings it back so you can open its web page.</span>
+    </div>
+  </div>
+
+  <legend style="margin-top:10px">Advanced</legend>
   <div class="control-group">
     <label class="control-label">Tool</label>
     <div class="controls">
       <input type="text" class="input-small" data-bind="value: settings.settings.plugins.knomi.tool">
-      <span class="help-block">Temperature shown on the KNOMI over Bluetooth (usually tool0).</span>
-    </div>
-  </div>
-
-  <legend>Bluetooth</legend>
-  <div class="control-group">
-    <div class="controls">
-      <label class="checkbox">
-        <input type="checkbox" data-bind="checked: settings.settings.plugins.knomi.ble_enabled"> Connect to the KNOMI over Bluetooth
-      </label>
-      <span class="help-block">
-        Turn Bluetooth on for the KNOMI on its own settings page first, then pair once from the Pi:
-        <code>bluetoothctl</code>, <code>scan on</code>, <code>pair &lt;KNOMI address&gt;</code>, type the code the KNOMI shows,
-        then <code>trust &lt;address&gt;</code>.
-      </span>
+      <span class="help-block">Which hotend's temperature the KNOMI shows over Bluetooth (usually tool0).</span>
     </div>
   </div>
   <div class="control-group">
     <label class="control-label">KNOMI address</label>
     <div class="controls">
-      <input type="text" class="input-medium" placeholder="auto" data-bind="value: settings.settings.plugins.knomi.ble_address">
-      <span class="help-block">Leave empty to find it automatically. It's filled in after the first connection.</span>
-    </div>
-  </div>
-  <div class="control-group">
-    <label class="control-label">Status</label>
-    <div class="controls">
-      <span data-bind="text: bleState"></span>
-      <button class="btn btn-mini" data-bind="click: refresh">Refresh</button>
+      <input type="text" class="input-medium" placeholder="set by pairing" data-bind="value: settings.settings.plugins.knomi.ble_address">
+      <span class="help-block">Filled in when you pair. Only change it if you know what you're doing.</span>
     </div>
   </div>
   <div class="control-group">
     <div class="controls">
-      <button class="btn" data-bind="click: wifiOn">Turn KNOMI WiFi on</button>
-      <span class="help-block">If the KNOMI turned its WiFi off for Bluetooth, this brings WiFi back for 10 minutes (e.g. to open its web page).</span>
+      <span class="help-block">Homing, probing, QGL and heating animations work out of the box. Steps that run inside Klipper macros (like PRINT_START) need the small macro helper in
+        <a href="https://github.com/Binnacle-Tech/OctoPrint-KNOMI#klipper-macros" target="_blank" rel="noopener">the plugin's README</a>.
+        Plugin <span data-bind="text: pluginVersion"></span>.</span>
     </div>
   </div>
 </form>
+</div>

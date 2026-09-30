@@ -23,6 +23,7 @@ import octoprint.plugin
 from octoprint.events import Events
 
 from .ble_link import BleLink
+from .pairing import Pairer
 from . import layers
 
 # KNOMI Moonraker-style command paths (what the KNOMI UI queues)
@@ -95,6 +96,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._msg_id = 0
         self._coaster = {}   # what the KNOMI's Coaster is doing (sidebar mirror)
         self._coaster_watch_until = 0
+        self._knomi = {"ip": "", "seen": 0.0, "via": "", "fw": ""}   # the last time the KNOMI checked in
+        self._pairer = None
         self._last_pushed = None
         self._ble = None
         self._layer_map = None   # layers.LayerMap of the file being printed
@@ -332,6 +335,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def on_after_startup(self):
         self._ble = BleLink(self, self._logger)
+        self._pairer = Pairer(self._logger, self._on_paired)
         if self._settings.get_boolean(["ble_enabled"]):
             self._ble.start()
         # OctoPrint restarted mid-print: pick the layers up again
@@ -406,7 +410,17 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         return True
 
     def get_api_commands(self):
-        return {"wifi_on": [], "coaster": [], "coaster_watch": []}
+        return {"wifi_on": [], "coaster": [], "coaster_watch": [], "ble_scan": [], "ble_pair": ["address"],
+                "ble_code": ["code"], "ble_cancel": [], "ble_forget": [], "ble_reconnect": []}
+
+    def _on_paired(self, address):
+        """Pairing worked (pairing thread): remember the KNOMI and connect."""
+        self._settings.set(["ble_address"], address)
+        self._settings.set_boolean(["ble_enabled"], True)
+        self._settings.save()
+        if self._ble:
+            self._ble.stop()
+            self._ble.start()
 
     def coaster_watched(self):
         """Someone has the sidebar open: the KNOMI then sends head motion ~3x a second."""
@@ -414,6 +428,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def coaster_update(self, data):
         """The KNOMI reports Coaster's mood, quirk, feeling, decorations, head motion and last report card."""
+        if data.get("fw"):
+            self._knomi["fw"] = str(data["fw"])[:24]
         def num(k, lo, hi):
             try:
                 return max(lo, min(hi, float(data.get(k, 0) or 0)))
@@ -441,6 +457,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def on_api_command(self, command, data):
         if command == "coaster":
+            self._knomi.update(ip=flask.request.remote_addr or "", seen=time.time(), via="WiFi")
             self.coaster_update(data)
             return flask.jsonify(ok=True, watch=self.coaster_watched())
         if command == "coaster_watch":
@@ -449,6 +466,34 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         if command == "wifi_on" and self._ble:
             self._ble.request_wifi()
             return flask.jsonify(ok=self._ble.state == "connected")
+        # pairing from the settings page
+        if command == "ble_scan" and self._pairer:
+            return flask.jsonify(ok=self._pairer.scan())
+        if command == "ble_pair" and self._pairer:
+            if self._ble:
+                self._ble.stop()   # the link would get in the way of pairing
+            return flask.jsonify(ok=self._pairer.pair(str(data.get("address", ""))))
+        if command == "ble_code" and self._pairer:
+            return flask.jsonify(ok=self._pairer.code(data.get("code", "")))
+        if command == "ble_cancel" and self._pairer:
+            self._pairer.cancel()
+            if self._ble and self._settings.get_boolean(["ble_enabled"]):
+                self._ble.start()
+            return flask.jsonify(ok=True)
+        if command == "ble_forget" and self._pairer:
+            address = (self._settings.get(["ble_address"]) or self._ble.address or "").strip()
+            if self._ble:
+                self._ble.stop()
+            self._settings.set(["ble_address"], "")
+            self._settings.set_boolean(["ble_enabled"], False)
+            self._settings.save()
+            ok = self._pairer.forget(address) if address else True
+            return flask.jsonify(ok=ok)
+        if command == "ble_reconnect" and self._ble:
+            self._ble.stop()
+            if self._settings.get_boolean(["ble_enabled"]):
+                self._ble.start()
+            return flask.jsonify(ok=True)
 
     # ---- updates -----------------------------------------------------------
 
@@ -468,11 +513,20 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         }
 
     def on_api_get(self, request):
+        # the KNOMI polls this over WiFi (its HTTP client says ESP32): that counts as checking in
+        if "ESP32" in (request.headers.get("User-Agent") or ""):
+            self._knomi.update(ip=request.remote_addr or "", seen=time.time(), via="WiFi")
         result = self._status()
         result["coaster"] = self._coaster
         if self._ble:
             result.update(ble_state=self._ble.state, ble_address=self._ble.address,
                           ble_error=self._ble.last_error)
+        if self._pairer:
+            result["pair"] = self._pairer.state()
+        k = dict(self._knomi)
+        k["seen_s"] = round(time.time() - k.pop("seen")) if self._knomi["seen"] else None
+        result["knomi"] = k
+        result["plugin_version"] = self._plugin_version
         return flask.jsonify(result)
 
 
@@ -547,6 +601,7 @@ def handle_knomi_command(plugin, path):
     printer = plugin._printer
     if path.startswith("/coaster?"):
         try:
+            plugin._knomi.update(seen=time.time(), via="Bluetooth")
             plugin.coaster_update(json.loads(path[len("/coaster?"):]))
         except (ValueError, TypeError):
             pass

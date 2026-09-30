@@ -43,14 +43,8 @@ The first check after installing may offer an update even if you're current; ins
 ## Bluetooth setup (optional)
 
 1. On the KNOMI's web settings, set **Bluetooth → On**, then restart the KNOMI.
-2. Pair once from the Pi. The KNOMI shows a 6-digit code:
-   ```
-   bluetoothctl
-   scan on
-   pair  <KNOMI address>
-   trust <KNOMI address>
-   ```
-   If `/boot/config.txt` (or `/boot/firmware/config.txt`) has `dtoverlay=disable-bt`, remove it and reboot first.
+2. In OctoPrint, Settings › KNOMI › Bluetooth: **Find KNOMI**, **Pair**, and type the 6-digit code the KNOMI shows.
+   The plugin pairs, trusts and remembers it, then connects. No `bluetoothctl` needed.
 3. OctoPrint → Settings → **KNOMI** → tick **Connect to the KNOMI over Bluetooth**.
 
 Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Bluetooth drops. The full guide is in [OCTOPRINT.md](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#bluetooth).
