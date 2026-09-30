@@ -9,6 +9,12 @@ $(function () {
         self.knomiDetail = ko.observable("");
         self.knomiUrl = ko.observable("");
         self.coasterLine = ko.observable("");
+        // the KNOMI's own pages through the plugin's proxy (/plugin/knomi/k/)
+        self.pagesUrl = ko.observable((window.BASEURL || "/") + "plugin/knomi/k/");
+        self.pagesOpen = ko.observable(false);
+        self.pagesSrc = ko.observable("about:blank");
+        self.openPages = function () { self.pagesSrc(self.pagesUrl()); self.pagesOpen(true); };
+        self.closePages = function () { self.pagesOpen(false); self.pagesSrc("about:blank"); };
         self.pluginVersion = ko.observable("");
         // Bluetooth link
         self.bleStateText = ko.observable("off");
@@ -109,6 +115,7 @@ $(function () {
         };
         self.onSettingsHidden = function () {
             if (timer) { clearInterval(timer); timer = null; }
+            self.closePages();
         };
     }
 

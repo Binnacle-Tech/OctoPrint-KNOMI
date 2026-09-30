@@ -18,6 +18,8 @@ SERVICE_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000001"
 STATUS_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000002"
 FILES_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000003"
 CMD_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000004"
+TUNNEL_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000006"   # the KNOMI's web pages over Bluetooth (OP41+)
+TUNNEL_FRAME = 509    # data bytes per frame (512-byte attribute, 3-byte header)
 
 HEARTBEAT_S = 2.0
 POLL_S = 0.25
@@ -80,6 +82,12 @@ class BleLink:
         # stop() gave up waiting) sees it has been replaced and quits instead of fighting the new one.
         self._gen = 0
         self._local = threading.local()
+        # HTTP tunnel (see request()): the connected client and its loop, and the response being collected
+        self._client = None
+        self._aloop = None
+        self._tun_lock = None
+        self._tun_id = 0
+        self._tun = None
         self._wifi_request = False
         self._files_dirty = True
         self.state = "off"
@@ -185,6 +193,11 @@ class BleLink:
                 async with BleakClient(target, timeout=20.0,
                                        disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
                     await client.start_notify(CMD_UUID, self._on_cmd)
+                    if client.services.get_characteristic(TUNNEL_UUID):
+                        await client.start_notify(TUNNEL_UUID, self._on_tunnel)
+                        self._tun_lock = asyncio.Lock()
+                        self._aloop = loop
+                        self._client = client
                     self.state = "connected"
                     self.last_error = ""
                     self._files_dirty = True
@@ -207,11 +220,14 @@ class BleLink:
                             await client.write_gatt_char(STATUS_UUID, payload, response=True)
                             last, last_t = payload, now
                         await asyncio.sleep(POLL_S)
+                self._client = None
             except (FileNotFoundError, ConnectionRefusedError):
+                self._client = None
                 msg = "Bluetooth service not available (is bluetoothd running, and is Bluetooth enabled on the Pi?)"
                 self.last_error = msg
                 self._logger.info("KNOMI BLE: %s", msg)
             except Exception as e:
+                self._client = None
                 msg = str(e) or e.__class__.__name__
                 if "not found" in msg.lower() and not self._use_path:
                     self._use_path = True   # try the paired device directly, right away
@@ -226,6 +242,81 @@ class BleLink:
                 await self._sleep(RETRY_S)
         if getattr(self._local, "gen", None) == self._gen:
             self.state = "off"
+
+    # ---- HTTP tunnel -----------------------------------------------------
+
+    def tunnel_ready(self):
+        return self._client is not None and self._aloop is not None
+
+    def request(self, method, path, content_type="", body=b"", timeout=None):
+        """One HTTP request to the KNOMI's web server over Bluetooth (any thread). Returns the raw
+        HTTP response bytes; raises on failure."""
+        if not self.tunnel_ready():
+            raise IOError("the KNOMI isn't connected over Bluetooth (or its firmware is older than OP41)")
+        if timeout is None:
+            timeout = 30 + len(body) / 8000.0   # uploads crawl over Bluetooth
+        fut = asyncio.run_coroutine_threadsafe(self._tunnel_request(method, path, content_type, body), self._aloop)
+        try:
+            return fut.result(timeout)
+        except Exception:
+            fut.cancel()
+            raise
+
+    async def _tunnel_request(self, method, path, content_type, body):
+        async with self._tun_lock:
+            client = self._client
+            if client is None:
+                raise IOError("Bluetooth link dropped")
+            self._tun_id = (self._tun_id + 1) & 0xFF
+            rid = self._tun_id
+            t = self._tun = {"id": rid, "seq": 0, "data": bytearray(), "done": asyncio.Event(),
+                             "error": None, "last": time.monotonic()}
+            try:
+                head = "{} {}\n{}\n{}".format(method, path, content_type or "", len(body)).encode("utf-8")
+                await client.write_gatt_char(TUNNEL_UUID, bytes([1, rid, 0]) + head, response=True)
+                seq = 0
+                for i in range(0, len(body), TUNNEL_FRAME):
+                    seq = (seq + 1) & 0xFF
+                    await client.write_gatt_char(TUNNEL_UUID, bytes([0, rid, seq]) + body[i:i + TUNNEL_FRAME], response=True)
+                    t["last"] = time.monotonic()
+                while not t["done"].is_set():   # the response, as long as it keeps coming
+                    try:
+                        await asyncio.wait_for(t["done"].wait(), 1.0)
+                    except asyncio.TimeoutError:
+                        if time.monotonic() - t["last"] > 20:
+                            raise IOError("the KNOMI stopped answering")
+                if t["error"]:
+                    raise IOError(t["error"])
+                return bytes(t["data"])
+            except asyncio.CancelledError:
+                try:
+                    await client.write_gatt_char(TUNNEL_UUID, bytes([4, rid, 0]), response=True)
+                except Exception:
+                    pass
+                raise
+            finally:
+                self._tun = None
+
+    def _on_tunnel(self, _sender, data):
+        t = self._tun
+        if t is None or len(data) < 3 or data[1] != t["id"]:
+            return
+        flags, seq = data[0], data[2]
+        t["last"] = time.monotonic()
+        if flags & 4:
+            t["error"] = bytes(data[3:]).decode("utf-8", "replace") or "the KNOMI couldn't answer"
+            t["done"].set()
+            return
+        if flags & 1:
+            t["seq"] = seq
+        elif seq != t["seq"]:
+            t["error"] = "part of the answer got lost over Bluetooth"
+            t["done"].set()
+            return
+        t["seq"] = (seq + 1) & 0xFF
+        t["data"] += data[3:]
+        if flags & 2:
+            t["done"].set()
 
     async def _sleep(self, seconds):
         end = time.monotonic() + seconds

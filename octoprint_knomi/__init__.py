@@ -78,7 +78,64 @@ MARKER_RE = re.compile(r"KNOMI\s+(\w+)\s*=\s*(\w+)", re.IGNORECASE)
 TRUE_VALUES = ("1", "true", "yes", "on")
 
 
+# pages that don't change for a given firmware version: kept after the first fetch over Bluetooth
+CACHEABLE_PAGES = {"/binnacle.css", "/coaster", "/layout", "/log", "/favicon.ico"}
+
+PROXY_ERROR_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>KNOMI</title></head>
+<body style="background:#0E1419;color:#E7EEF4;font:15px system-ui,sans-serif;padding:24px">
+<h2 style="margin-top:0">Can't reach the KNOMI</h2><p style="color:#93A4B2">{error}</p>
+<p><a style="color:#4FD1C5" href="javascript:location.reload()">Try again</a></p></body></html>"""
+
+# Added to every KNOMI page shown through OctoPrint: OctoPrint wants its CSRF token on POSTs, which the
+# KNOMI's plain forms and fetch() calls don't send. It also marks how the page came (WiFi / Bluetooth).
+PROXY_SCRIPT = """<script>(function(){
+var m=document.cookie.match(/(?:^|; )csrf_token[^=]*=([^;]+)/),tok=m?decodeURIComponent(m[1]):"";
+function post(m){return m&&m.toUpperCase()!=="GET"}
+var of=window.fetch;window.fetch=function(u,o){o=o||{};if(post(o.method)){var h=new Headers(o.headers||{});h.set("X-CSRF-Token",tok);o.headers=h}o.credentials="same-origin";return of.call(window,u,o)};
+var xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open=function(m){this._km=m;return xo.apply(this,arguments)};
+XMLHttpRequest.prototype.send=function(){if(post(this._km))this.setRequestHeader("X-CSRF-Token",tok);return xs.apply(this,arguments)};
+function send(f,b){var a=(b&&b.getAttribute("formaction"))||f.getAttribute("action")||location.href,fd=new FormData(f);
+if(b&&b.name)fd.append(b.name,b.value||"");document.body.style.opacity=".6";
+of.call(window,new URL(a,location.href),{method:(f.getAttribute("method")||"POST").toUpperCase(),body:fd,credentials:"same-origin",headers:{"X-CSRF-Token":tok}})
+.then(function(r){var u=r.url;return r.text().then(function(h){try{history.replaceState(null,"",u)}catch(e){}document.open();document.write(h);document.close()})})
+.catch(function(e){document.body.style.opacity="";alert("Couldn't reach the KNOMI: "+e)})}
+HTMLFormElement.prototype.submit=function(){send(this,null)};
+document.addEventListener("submit",function(e){if(e.defaultPrevented)return;e.preventDefault();send(e.target,e.submitter)});
+window.KNOMI_VIA="%VIA%";})();</script>"""
+
+
+def inject_proxy_script(content, via):
+    """Put PROXY_SCRIPT first thing in <head> (before the page's own scripts run)."""
+    script = PROXY_SCRIPT.replace("%VIA%", via).encode("utf-8")
+    low = content[:4096].lower()
+    i = low.find(b"<head>")
+    if i >= 0:
+        i += len(b"<head>")
+        return content[:i] + script + content[i:]
+    return script + content
+
+
+def parse_http_response(raw):
+    """(status, [(header, value)], body) from raw HTTP/1.1 response bytes (chunked or not)."""
+    import http.client
+    import io
+
+    class _Sock(object):
+        def __init__(self, data):
+            self._f = io.BytesIO(data)
+
+        def makefile(self, *args, **kwargs):
+            return self._f
+
+    r = http.client.HTTPResponse(_Sock(raw))
+    r.begin()
+    body = r.read()
+    return r.status, r.getheaders(), body
+
+
 class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
+                  octoprint.plugin.BlueprintPlugin,
                   octoprint.plugin.EventHandlerPlugin,
                   octoprint.plugin.SettingsPlugin,
                   octoprint.plugin.TemplatePlugin,
@@ -97,6 +154,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._coaster = {}   # what the KNOMI's Coaster is doing (sidebar mirror)
         self._coaster_watch_until = 0
         self._knomi = {"ip": "", "seen": 0.0, "via": "", "fw": ""}   # the last time the KNOMI checked in
+        self._wifi_seen = 0.0       # last check-in over WiFi (the proxy tries WiFi first if recent)
+        self._wifi_failed = 0.0     # the proxy couldn't reach it over WiFi (skip WiFi for a while)
+        self._page_cache = {}       # (fw, path) -> response, static pages fetched over Bluetooth
         self._pairer = None
         self._last_pushed = None
         self._ble = None
@@ -470,6 +530,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_api_command(self, command, data):
         if command == "coaster":
             self._knomi.update(ip=flask.request.remote_addr or "", seen=time.time(), via="WiFi")
+            self._wifi_seen = time.time()
             self.coaster_update(data)
             return flask.jsonify(ok=True, watch=self.coaster_watched())
         if command == "coaster_watch":
@@ -515,6 +576,81 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     # ---- updates -----------------------------------------------------------
 
+    # ---- the KNOMI's own web pages, through OctoPrint -------------------------
+    # /plugin/knomi/k/<path> forwards to the KNOMI: over WiFi when it's on, otherwise over Bluetooth
+    # (firmware OP41+). The KNOMI's pages use relative links, so they work under this prefix.
+
+    def is_blueprint_protected(self):
+        return True
+
+    def is_blueprint_csrf_protected(self):
+        return True
+
+    @octoprint.plugin.BlueprintPlugin.route("/k/", methods=["GET", "POST"], defaults={"path": ""})
+    @octoprint.plugin.BlueprintPlugin.route("/k/<path:path>", methods=["GET", "POST"])
+    def knomi_proxy(self, path):
+        from octoprint.access.permissions import Permissions
+        if not Permissions.SETTINGS.can():
+            return flask.make_response("Only users who may change settings can open the KNOMI's pages.", 403)
+        req = flask.request
+        target = "/" + path + ("?" + req.query_string.decode("latin-1") if req.query_string else "")
+        body = req.get_data() if req.method == "POST" else b""
+        ctype = req.headers.get("Content-Type", "") if req.method == "POST" else ""
+        try:
+            status, headers, content, via = self._knomi_fetch(req.method, target, ctype, body)
+        except Exception as e:
+            self._logger.info("KNOMI proxy %s %s failed: %s", req.method, target, e)
+            from markupsafe import escape
+            return flask.make_response(PROXY_ERROR_PAGE.format(error=escape(str(e))), 502)
+        prefix = req.script_root + "/plugin/" + self._identifier + "/k/"
+        out_headers = {}
+        for k, v in headers:
+            kl = k.lower()
+            if kl == "location" and v.startswith("/"):
+                v = prefix + v[1:]
+            if kl in ("content-type", "location", "cache-control", "content-disposition"):
+                out_headers[k] = v
+        ct = out_headers.get("Content-Type", out_headers.get("content-type", ""))
+        if "text/html" in ct:
+            content = inject_proxy_script(content, via)
+        return flask.Response(content, status=status, headers=out_headers)
+
+    def _knomi_fetch(self, method, target, ctype, body):
+        """(status, headers, body, "WiFi"/"Bluetooth") from the KNOMI."""
+        ip = self._knomi.get("ip")
+        now = time.time()
+        if ip and now - self._wifi_seen < 120 and now - self._wifi_failed > 30:
+            import requests
+            try:
+                r = requests.request(method, "http://{}{}".format(ip, target), data=body or None,
+                                     headers={"Content-Type": ctype} if ctype else {},
+                                     timeout=(2, 60 + len(body) / 50000.0), allow_redirects=False)
+                return r.status_code, list(r.headers.items()), r.content, "WiFi"
+            except requests.RequestException:
+                self._wifi_failed = now   # WiFi is probably off: Bluetooth for a while
+        if not self._ble or not self._ble.tunnel_ready():
+            raise IOError("The KNOMI isn't reachable: not over WiFi, and not connected over Bluetooth "
+                          "(needs firmware OP41 or newer and the Bluetooth link on).")
+        key = (self._knomi.get("fw"), target)
+        if method == "GET" and key in self._page_cache:
+            return self._page_cache[key] + ("Bluetooth",)
+        raw = None
+        for attempt in range(2):
+            try:
+                raw = self._ble.request(method, target, ctype, body)
+                break
+            except IOError as e:
+                if method != "GET" or attempt or "lost" not in str(e):
+                    raise
+        status, headers, content = parse_http_response(raw)
+        if method == "GET" and status == 200 and target.split("?")[0] in CACHEABLE_PAGES:
+            self._page_cache[key] = (status, headers, content)
+        return status, headers, content, "Bluetooth"
+
+    def bodysize_hook(self, current_max_body_sizes, *args, **kwargs):
+        # GIF uploads (1.5 MB) and firmware files (3 MB+) go through the proxy
+        return [("POST", r"/k/.*", 8 * 1024 * 1024)]
+
     def get_update_information(self):
         """OctoPrint's Software Update checks GitHub for new commits on main and offers
         a one-click update (Settings > Software Update)."""
@@ -534,6 +670,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         # the KNOMI polls this over WiFi (its HTTP client says ESP32): that counts as checking in
         if "ESP32" in (request.headers.get("User-Agent") or ""):
             self._knomi.update(ip=request.remote_addr or "", seen=time.time(), via="WiFi")
+            self._wifi_seen = time.time()
         result = self._status()
         result["coaster"] = self._coaster
         if self._ble:
@@ -671,4 +808,5 @@ def __plugin_load__():
         "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.on_gcode_sent,
         "octoprint.comm.protocol.gcode.received": __plugin_implementation__.on_gcode_received,
         "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
+        "octoprint.server.http.bodysize": __plugin_implementation__.bodysize_hook,
     }

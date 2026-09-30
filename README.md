@@ -47,6 +47,8 @@ The first check after installing may offer an update even if you're current; ins
    The plugin pairs, trusts and remembers it, then connects. No `bluetoothctl` needed.
 3. OctoPrint → Settings → **KNOMI** → tick **Connect to the KNOMI over Bluetooth**.
 
+Settings › KNOMI › **KNOMI's own settings** opens all of the KNOMI's web pages inside OctoPrint, over WiFi or, with the KNOMI's WiFi off, over Bluetooth (KNOMI firmware OP41+).
+
 Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Bluetooth drops. The full guide is in [OCTOPRINT.md](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#bluetooth).
 
 ## FAQ
