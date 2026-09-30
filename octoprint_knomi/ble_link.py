@@ -43,6 +43,21 @@ def encode_files(paths):
     return frames
 
 
+def paired_knomi():
+    """Address of a KNOMI the Pi has already paired with (bluetoothctl), or None."""
+    import subprocess
+    for args in (["bluetoothctl", "devices", "Paired"], ["bluetoothctl", "paired-devices"]):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            continue
+        for line in out.splitlines():
+            parts = line.split(None, 2)   # "Device CC:BA:97:07:9C:D5 KNOMI-KNOMI"
+            if len(parts) == 3 and parts[0] == "Device" and parts[2].startswith("KNOMI"):
+                return parts[1]
+    return None
+
+
 class BleLink:
     def __init__(self, plugin, logger):
         self._plugin = plugin
@@ -93,7 +108,14 @@ class BleLink:
         from bleak import BleakScanner
         self.state = "searching"
         devices = await BleakScanner.discover(timeout=8.0, service_uuids=[SERVICE_UUID])
-        return devices[0].address if devices else None
+        if devices:
+            return devices[0].address
+        # A KNOMI that's already connected (for example, left connected by bluetoothctl after pairing)
+        # stops advertising, so a scan can't see it. Look for one the Pi has already paired with.
+        address = paired_knomi()
+        if address:
+            self._logger.info("KNOMI BLE: not advertising, using the paired KNOMI at %s", address)
+        return address
 
     async def _send_files(self, client):
         for frame in encode_files(self._plugin.ble_file_list()):
@@ -124,6 +146,8 @@ class BleLink:
             try:
                 address = self._plugin.ble_configured_address() or await self._find()
                 if not address:
+                    if self.state != "not found":
+                        self._logger.info("KNOMI BLE: no KNOMI found. Is Bluetooth on in the KNOMI's settings, and has the Pi paired with it?")
                     self.state = "not found"
                     await self._sleep(10)
                     continue

@@ -142,7 +142,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             for flag, since in list(self._cmd_flags.items()):
                 if now - since > COMMAND_FLAG_TIMEOUT:
                     del self._cmd_flags[flag]
-            status = {f: bool(f in self._cmd_flags or self._marker_flags[f]) for f in FLAGS}
+            status = {f: bool(f in self._cmd_flags or self._marker_flags.get(f)) for f in FLAGS}
         status["fan"] = self._fan
         status["speed"] = self._speed
         status["msg"] = self._msg
