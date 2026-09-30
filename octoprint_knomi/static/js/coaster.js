@@ -119,24 +119,107 @@ $(function () {
         }
 
         /* ---- decorations: the KNOMI says which; snow, leaves and fireworks are made here ---- */
+        // autumn: a fixed 12 leaves drift down and pile up at the bottom; moves toss them back up. The KNOMI
+        // uses its accelerometer; here the head's sway (sent by the KNOMI) stands in for it.
+        var leavesMade = 0, leafSeq = 0;
+        function bowlY(x) { var dx = x - 120; return 120 + Math.sqrt(Math.max(0, 112 * 112 - dx * dx)); }
+        function leafRestY(q) {
+            var sn = q.kind === "snow", w = sn ? 4 : 8, lay = 0;
+            parts.forEach(function (o) { if (o !== q && o.rest && o.seq < q.seq && Math.abs(o.x - q.x) < w) lay++; });
+            return bowlY(q.x) - (sn ? 2 : 3) - (sn ? 1.8 : 3.5) * lay;
+        }
+        // snow keeps falling, piles up at the bottom (slumping into a mound), and each flake in the pile melts away after a while
+        var snowColN = new Array(80).fill(0);
+        function snowCol(x) { return Math.max(0, Math.min(79, Math.floor(x / 3))); }
+        function snowTop(c) { return bowlY(c * 3 + 1.5) - 2 - 1.8 * snowColN[c]; }
+        function snowPile(dt) {
+            snowColN.fill(0);
+            parts.forEach(function (q) { if (q.kind === "snow" && q.rest) snowColN[snowCol(q.x)]++; });
+            parts.forEach(function (q) {
+                if (q.kind !== "snow" || !q.rest) return;
+                var c = snowCol(q.x), under = 0;
+                parts.forEach(function (o) { if (o !== q && o.rest && o.kind === "snow" && o.seq < q.seq && snowCol(o.x) === c) under++; });
+                var y = bowlY(q.x) - 2 - 1.8 * under;
+                q.y += (y - q.y) * (1 - Math.exp(-dt * 8));
+                var yl = c > 0 ? snowTop(c - 1) : -1e9, yr = c < 79 ? snowTop(c + 1) : -1e9;
+                if (Math.max(yl, yr) > y + 1) q.x += (yr > yl ? 1 : -1) * 40 * dt;
+            });
+        }
+        function stepSnow(q, dt) {
+            if (q.rest) { q.life -= dt; return; }
+            q.ph += dt; q.y += q.vy * dt; q.x += Math.sin(q.ph * 1.3) * 8 * dt;
+            if (q.y > 120 && q.y >= snowTop(snowCol(q.x))) { q.rest = true; q.seq = ++leafSeq; q.life = rnd(15, 40); }
+        }
+        function stepLeaf(q, dt) {
+            var ax = -head.x / 40, az = head.y / 40, jolt = Math.hypot(ax, az);
+            if (q.rest) {
+                if (jolt > 0.12 && Math.random() < (jolt - 0.12) * 8 * dt) {
+                    var k = Math.min(1.6, jolt / 0.3);
+                    q.rest = false; q.vy = -rnd(50, 110) * k; q.vx = -ax * 260 + rnd(-25, 25); q.vr = rnd(-8, 8); return;
+                }
+                var dx = q.x - 120, sl = Math.atan2(dx, Math.sqrt(Math.max(1, 112 * 112 - dx * dx)));
+                if (Math.abs(dx) > 25) q.x -= (dx > 0 ? 1 : -1) * 45 * Math.sin(Math.abs(sl)) * dt;
+                var lay = 0, mx = 0;
+                parts.forEach(function (o) { if (o !== q && o.rest && o.seq < q.seq && Math.abs(o.x - q.x) < 8) { lay++; mx += o.x; } });
+                if (lay >= 3) q.x += (q.x >= mx / lay ? 1 : -1) * 8 * dt;
+                q.y += (leafRestY(q) - q.y) * (1 - Math.exp(-dt * 10));
+                var tg = sl + Math.PI * Math.round((q.rot - sl) / Math.PI);
+                q.rot += (tg - q.rot) * (1 - Math.exp(-dt * 6)); return;
+            }
+            q.vx += -ax * 300 * dt; q.vy += az * 300 * dt + 80 * dt;
+            var term = 24; if (q.vy > term) q.vy += (term - q.vy) * (1 - Math.exp(-dt * 4));
+            q.vx *= Math.exp(-dt * 1.2); q.ph += dt;
+            var sway = Math.sin(q.ph * 2.2) * 16 * Math.max(0, Math.min(1, q.vy / term));
+            q.x += (q.vx + sway) * dt; q.y += q.vy * dt; q.rot += q.vr * dt; q.vr *= Math.exp(-dt * 0.8);
+            if (Math.abs(q.vr) < 2) q.vr = q.vr < 0 ? -2 : 2;
+            var ex = q.x - 120, ey = q.y - 120, d = Math.hypot(ex, ey);
+            if (d > 114 && !(q.y < 40 && q.vy > 0)) {
+                var nx = ex / d, ny = ey / d, vn = q.vx * nx + q.vy * ny;
+                q.x = 120 + nx * 114; q.y = 120 + ny * 114;
+                if (vn > 0) { q.vx -= 1.3 * vn * nx; q.vy -= 1.3 * vn * ny; }
+            }
+            if (q.vy >= 0 && q.y > 120) {
+                q.seq = leafSeq + 1;
+                var fy = leafRestY(q);
+                if (q.y >= fy) {
+                    for (var t = 0; t < 4 && bowlY(q.x) - 3 - fy > 10; t++) { q.x += Math.random() < 0.5 ? 6 : -6; fy = leafRestY(q); }
+                    q.rest = true; q.seq = ++leafSeq; q.vx = q.vy = 0; q.y = Math.min(q.y, fy);
+                }
+            }
+        }
         function stepDeco(dt) {
             var k = st.deco === "auto" || st.deco === "off" ? "" : st.deco;
-            if (k !== decoKind) { decoKind = k; parts = []; fw = []; }
+            if (k !== decoKind) { decoKind = k; parts = []; fw = []; leavesMade = 0; leafSeq = 0; }
             var snow = k === "winter" || (k === "holidays" && !st.south);
-            var want = snow ? (k === "winter" ? 30 : 24) : k === "spring" ? 14 : k === "autumn" ? 12 : k === "valentine" ? 10 : 0;
-            spawnT -= dt;
-            if (parts.length < want && spawnT <= 0) {
+            if (k === "autumn") {
+                spawnT -= dt;
+                if (leavesMade < 12 && spawnT <= 0) {
+                    spawnT = 0.7; leavesMade++;
+                    parts.push({kind: "leaf", x: rnd(40, 200), y: -8, ph: rnd(0, 6.28), rot: rnd(0, 6.28), vr: rnd(-2, 2), vx: 0, vy: rnd(16, 26),
+                                seq: 0, rest: false, col: ["#E65100", "#F9A825", "#BF360C", "#A1887F"][Math.floor(rnd(0, 4))]});
+                }
+                parts.forEach(function (q) { stepLeaf(q, dt); });
+            }
+            var want = snow ? (k === "winter" ? 30 : 24) : k === "spring" ? 14 : k === "valentine" ? 10 : 0;
+            if (k !== "autumn") spawnT -= dt;
+            var falling = parts.filter(function (p) { return !p.rest; }).length;
+            if (k !== "autumn" && falling < want && parts.length < 64 && spawnT <= 0) {
                 spawnT = k === "valentine" ? 0.5 : 0.25;
                 var p = {x: rnd(10, 230), y: -8, ph: rnd(0, 6.28), rot: rnd(0, 6.28), vr: rnd(-2, 2)};
                 if (snow) { p.kind = "snow"; p.r = rnd(1, 2.4); p.vy = rnd(14, 30); p.col = "#E7EEF4"; }
                 else if (k === "spring") { p.kind = "petal"; p.vy = rnd(10, 18); p.col = Math.random() < 0.5 ? "#F8BBD0" : "#F48FB1"; }
-                else if (k === "autumn") { p.kind = "leaf"; p.vy = rnd(16, 26); p.col = ["#E65100", "#F9A825", "#BF360C", "#A1887F"][Math.floor(rnd(0, 4))]; }
                 else { p.kind = "heart"; p.y = 250; p.vy = -rnd(10, 18); p.r = rnd(3.5, 6); p.col = Math.random() < 0.5 ? "#E53935" : "#F48FB1"; }
                 parts.push(p);
             }
-            if (!want) parts = [];
-            parts.forEach(function (p) { p.ph += dt; p.y += p.vy * dt; p.rot += p.vr * dt; p.x += Math.sin(p.ph * (p.kind === "leaf" ? 2.2 : 1.3)) * (p.kind === "snow" ? 8 : 16) * dt; });
-            parts = parts.filter(function (p) { return p.y < 250 && p.y > -20 && p.x > -20 && p.x < 260; });
+            if (snow) {
+                parts.forEach(function (q) { stepSnow(q, dt); });
+                snowPile(dt);
+                parts = parts.filter(function (p) { return !(p.rest && p.life <= 0) && p.x > -20 && p.x < 260; });
+            } else if (k !== "autumn") {
+                if (!want) parts = [];
+                parts.forEach(function (p) { p.ph += dt; p.y += p.vy * dt; p.rot += p.vr * dt; p.x += Math.sin(p.ph * 1.3) * (p.kind === "snow" ? 8 : 16) * dt; });
+                parts = parts.filter(function (p) { return p.y < 250 && p.y > -20 && p.x > -20 && p.x < 260; });
+            }
             if (k === "newyear" || k === "july4") {
                 fwT -= dt;
                 if (fwT <= 0 && fw.length < 3) {
@@ -156,7 +239,7 @@ $(function () {
         function drawDecoBack(ctx) {
             parts.forEach(function (p) {
                 ctx.save(); ctx.translate(p.x, p.y); ctx.fillStyle = p.col; ctx.strokeStyle = p.col;
-                if (p.kind === "snow") { ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, 7); ctx.fill(); }
+                if (p.kind === "snow") { ctx.globalAlpha = 0.85 * (p.rest ? Math.max(0, Math.min(1, p.life / 4)) : 1); ctx.beginPath(); ctx.arc(0, 0, p.r, 0, 7); ctx.fill(); }
                 else if (p.kind === "petal") { ctx.rotate(p.rot); ctx.beginPath(); ctx.ellipse(0, 0, 3.6, 2, 0, 0, 7); ctx.fill(); }
                 else if (p.kind === "leaf") { ctx.rotate(p.rot); ctx.beginPath(); ctx.ellipse(0, 0, 5.5, 2.8, 0, 0, 7); ctx.fill(); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(8, 0); ctx.stroke(); }
                 else { ctx.globalAlpha = clamp((p.y - 10) / 60, 0, 0.9); heart(ctx, 0, 0, p.r); }
