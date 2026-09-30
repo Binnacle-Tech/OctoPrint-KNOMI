@@ -34,6 +34,12 @@ Restart OctoPrint when asked, then flash the **[KNOMI for OctoPrint firmware](ht
 
 <p align="center"><img src="docs/images/octoprint-settings.png" alt="OctoPrint-KNOMI plugin settings: tool, Bluetooth link, KNOMI address, status" width="75%"></p>
 
+## Updates
+
+OctoPrint's **Software Update** keeps the plugin current: it checks GitHub for new commits on `main` and shows
+**Update now** under Settings › Software Update (and a notification). After the first install, updates are one click.
+The first check after installing may offer an update even if you're current; installing it records the version.
+
 ## Bluetooth setup (optional)
 
 1. On the KNOMI's web settings, set **Bluetooth → On**, then restart the KNOMI.

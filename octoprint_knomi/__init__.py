@@ -450,6 +450,23 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._ble.request_wifi()
             return flask.jsonify(ok=self._ble.state == "connected")
 
+    # ---- updates -----------------------------------------------------------
+
+    def get_update_information(self):
+        """OctoPrint's Software Update checks GitHub for new commits on main and offers
+        a one-click update (Settings > Software Update)."""
+        return {
+            "knomi": {
+                "displayName": "KNOMI",
+                "displayVersion": self._plugin_version,
+                "type": "github_commit",
+                "user": "Binnacle-Tech",
+                "repo": "OctoPrint-KNOMI",
+                "branch": "main",
+                "pip": "https://github.com/Binnacle-Tech/OctoPrint-KNOMI/archive/{target_version}.zip",
+            }
+        }
+
     def on_api_get(self, request):
         result = self._status()
         result["coaster"] = self._coaster
@@ -580,4 +597,5 @@ def __plugin_load__():
     __plugin_hooks__ = {
         "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.on_gcode_sent,
         "octoprint.comm.protocol.gcode.received": __plugin_implementation__.on_gcode_received,
+        "octoprint.plugin.softwareupdate.check_config": __plugin_implementation__.get_update_information,
     }
