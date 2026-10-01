@@ -108,9 +108,11 @@ $(function () {
         var timer = null;
         self.onSettingsShown = function () {
             self.refresh();
-            if (!self.device) self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
-            self.device.load();
             if (!timer) timer = setInterval(self.refresh, 1500);
+            try {   // the KNOMI's own settings; a problem there mustn't take the link controls with it
+                if (!self.device) self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
+                self.device.load();
+            } catch (e) { console.error("KNOMI settings:", e); }
         };
         self.onSettingsHidden = function () {
             if (timer) { clearInterval(timer); timer = null; }
