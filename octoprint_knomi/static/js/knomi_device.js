@@ -296,9 +296,12 @@
     KnomiDevice.prototype.firmwareField = function (f) {
         var st = el("span", {"class": "muted", style: "font-size:12px"});
         var file = el("input", {type: "file", accept: ".bin", style: "max-width:220px"});
+        var news = el("span", {"class": "muted"});
         var timer = null;
         function poll() {
             OctoPrint.simpleApiGet("knomi").done(function (r) {
+                news.textContent = r.fw_new ? "New release: " + r.fw_new : (r.fw_latest ? "Up to date (latest is " + r.fw_latest + ")" : "");
+                news.className = r.fw_new ? "label label-warning" : "muted";
                 var u = r.fw_update || {};
                 if (!u.state || u.state === "idle") return;
                 st.className = u.state === "error" ? "text-error" : u.state === "done" ? "text-success" : "muted";
@@ -323,7 +326,7 @@
         }}, [el("i", {"class": "fa fa-upload"}), " Install this .bin"]);
         setTimeout(poll, 100);
         return el("div", {style: "display:flex;flex-direction:column;gap:4px;width:100%"}, [
-            el("span", {text: f.l, style: "font-weight:600"}),
+            el("div", {style: "display:flex;gap:8px;align-items:center"}, [el("span", {text: f.l, style: "font-weight:600"}), news]),
             f.h ? el("span", {"class": "muted", text: f.h, style: "font-size:12px"}) : null,
             el("div", {style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center"}, [gh, el("span", {"class": "muted", text: "or"}), file, upl]),
             st]);

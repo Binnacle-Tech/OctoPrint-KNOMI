@@ -208,6 +208,8 @@ class BleLink:
                         info = json.loads(bytes(await client.read_gatt_char(INFO_UUID)).decode("utf-8", "replace"))
                         m = re.search(r"OP(\d+)", str(info.get("fw", "")), re.I)
                         fw = int(m.group(1)) if m else 0
+                        if info.get("fw"):
+                            self._plugin.ble_info(str(info["fw"]))
                     except Exception:
                         pass
                     self._tun_char = None
@@ -246,12 +248,16 @@ class BleLink:
                         self._wifi_request = False
                         st = self._plugin.ble_status(wifi=wifi)
                         payload = json.dumps(st, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-                        while len(payload) > 500 and st.get("m"):   # one BLE write holds 512 bytes: shorten the message
+                        while len(payload) > 470 and st.get("m"):   # one BLE write holds 512 bytes (with the clock below)
                             st["m"] = st["m"][:-8]
                             payload = json.dumps(st, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
                         now = time.monotonic()
                         if payload != last or now - last_t >= HEARTBEAT_S or wifi:
-                            await client.write_gatt_char(STATUS_UUID, payload, response=True)
+                            # the Pi's clock rides along (with WiFi off the KNOMI has no NTP); it's left out of the
+                            # comparison so it doesn't make every poll a write
+                            lt = time.localtime()
+                            out = payload[:-1] + ',"ts":{},"tz":{}}}'.format(int(time.time()), int(lt.tm_gmtoff // 60)).encode()
+                            await client.write_gatt_char(STATUS_UUID, out, response=True)
                             last, last_t = payload, now
                         await asyncio.sleep(POLL_S)
                 self._client = None

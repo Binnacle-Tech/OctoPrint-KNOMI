@@ -165,6 +165,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._push_lock = threading.RLock()
         self._layer = (0, None)  # (layer, Z mm) at OctoPrint's file position
         self._layer_timer = None
+        self._fw = {"state": "idle"}   # firmware install: state, msg, pct
+        self._fw_latest = ""           # newest KNOMI firmware release on GitHub, e.g. "OP46"
+        self._fw_told = ""             # the release Coaster already announced
 
     # ---- helpers ---------------------------------------------------------
 
@@ -215,6 +218,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         status["msg_id"] = self._msg_id
         # tells the KNOMI which progress OctoPrint's dashboard shows
         status["time_progress"] = self._time_progress()
+        status["tz"] = int(time.localtime().tm_gmtoff // 60)   # the KNOMI's clock: the Pi's time zone
         # layer and Z from the file position, the way OctoPrint's G-code viewer follows a print
         lm = self._layer_map
         if lm is not None and lm.material:
@@ -406,6 +410,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._pairer = Pairer(self._logger, self._on_paired, self._on_pair_done)
         if self._settings.get_boolean(["ble_enabled"]):
             self._ble.start()
+        threading.Thread(target=self._fw_watch, daemon=True, name="knomi-fw-watch").start()
         # OctoPrint restarted mid-print: pick the layers up again
         try:
             if self._printer.is_printing() or self._printer.is_paused():
@@ -413,6 +418,54 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 self._start_layer_tracking({"origin": f.get("origin"), "path": f.get("path")})
         except Exception:
             self._logger.exception("KNOMI: couldn't resume layer tracking")
+
+    # ---- new KNOMI firmware: Coaster says so, the settings tab offers it ----
+
+    FW_REPO = "Binnacle-Tech/KNOMI"
+
+    def _fw_watch(self):
+        last_check = 0.0
+        while True:
+            if time.time() - last_check > 6 * 3600:
+                try:
+                    import requests
+                    r = requests.get("https://api.github.com/repos/{}/releases/latest".format(self.FW_REPO), timeout=20,
+                                     headers={"Accept": "application/vnd.github+json"})
+                    if r.ok:
+                        m = re.search(r"op(\d+)", r.json().get("tag_name", ""), re.I)
+                        if m:
+                            self._fw_latest = "OP" + m.group(1)
+                    last_check = time.time()
+                except Exception as e:
+                    self._logger.debug("KNOMI: couldn't check for new firmware: %s", e)
+                    last_check = time.time() - 5 * 3600   # try again in an hour
+            self._fw_announce()
+            time.sleep(600)
+
+    def _fw_newer(self):
+        """The newer release ("OP46") if the KNOMI runs something older, else ""."""
+        have = re.search(r"OP(\d+)", self._knomi.get("fw") or "", re.I)
+        latest = re.search(r"OP(\d+)", self._fw_latest or "", re.I)
+        if have and latest and int(latest.group(1)) > int(have.group(1)):
+            return self._fw_latest
+        return ""
+
+    def _fw_announce(self):
+        new = self._fw_newer()
+        if not new or new == self._fw_told:
+            return
+        try:
+            if self._printer.is_printing() or self._printer.is_paused():
+                return   # not in the middle of a print; next time
+        except Exception:
+            return
+        self._fw_told = new
+        self._set_message("KNOMI firmware {} is out. Update in Settings > KNOMI".format(new))
+
+    def ble_info(self, fw):
+        """The KNOMI's firmware version, read when Bluetooth connects."""
+        self._knomi["fw"] = fw[:24]
+        self._fw_announce()
 
     def on_shutdown(self):
         if self._ble:
@@ -504,6 +557,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         """The KNOMI reports Coaster's mood, quirk, feeling, decorations, head motion and last report card."""
         if data.get("fw"):
             self._knomi["fw"] = str(data["fw"])[:24]
+            self._fw_announce()
         ip = str(data.get("ip") or "")
         if ip and re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):   # sent by OP41+, also over Bluetooth
             self._remember_ip(ip)
@@ -780,6 +834,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         result["knomi"] = k
         result["plugin_version"] = self._plugin_version
         result["fw_update"] = self._fw
+        result["fw_latest"] = self._fw_latest
+        result["fw_new"] = self._fw_newer()
         return flask.jsonify(result)
 
 
