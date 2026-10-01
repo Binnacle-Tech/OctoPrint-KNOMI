@@ -88,7 +88,7 @@ class BleLink:
         self._tun_lock = None
         self._tun_id = 0
         self._tun = None
-        self._tun_refreshed = False   # reconnected once already to find the tunnel
+        self._tun_refreshed = 0       # reconnects so far to find the tunnel
         self._refresh_at = 0
         self._wifi_request = False
         self._files_dirty = True
@@ -200,11 +200,11 @@ class BleLink:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
-                    elif not self._tun_refreshed:
+                    elif self._tun_refreshed < 4:
                         # BlueZ keeps a paired device's list of characteristics; after a firmware update that
-                        # added one, the KNOMI says so (OP41+) and BlueZ looks again: reconnect once to use it
-                        self._tun_refreshed = True
-                        self._refresh_at = time.monotonic() + 8
+                        # added one it can take a reconnect (or a few) before BlueZ looks again
+                        self._tun_refreshed += 1
+                        self._refresh_at = time.monotonic() + (5, 20, 60, 300)[self._tun_refreshed - 1]
                     self.state = "connected"
                     self.last_error = ""
                     self._files_dirty = True
