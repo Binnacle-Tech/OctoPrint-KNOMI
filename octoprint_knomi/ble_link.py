@@ -11,6 +11,7 @@ BlueZ reuses the bond automatically.
 """
 import asyncio
 import json
+import re
 import threading
 import time
 
@@ -18,7 +19,10 @@ SERVICE_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000001"
 STATUS_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000002"
 FILES_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000003"
 CMD_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000004"
+INFO_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000005"
 TUNNEL_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000006"   # the KNOMI's web pages over Bluetooth (OP41+)
+# OP43+ also carries the tunnel on FILES (writes flagged 0x80) and CMD (notifications starting 0x01), for
+# a Pi whose BlueZ still has the KNOMI's characteristics from before OP41 cached and can't see TUNNEL
 TUNNEL_FRAME = 509    # data bytes per frame (512-byte attribute, 3-byte header)
 
 HEARTBEAT_S = 2.0
@@ -89,6 +93,7 @@ class BleLink:
         self._tun_id = 0
         self._tun = None
         self._tun_refreshed = 0       # reconnects so far to find the tunnel
+        self._tun_char = None         # TUNNEL_UUID, or FILES_UUID (OP43+ on a Pi with an old cache)
         self._refresh_at = 0
         self._wifi_request = False
         self._files_dirty = True
@@ -156,6 +161,9 @@ class BleLink:
             await client.write_gatt_char(FILES_UUID, frame, response=True)
 
     def _on_cmd(self, _sender, data):
+        if data and data[0] == 1:   # a page-tunnel frame riding on CMD
+            self._on_tunnel(_sender, bytes(data[1:]))
+            return
         try:
             path = bytes(data).decode("utf-8", errors="replace")
         except Exception:
@@ -195,8 +203,20 @@ class BleLink:
                 async with BleakClient(target, timeout=20.0,
                                        disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
                     await client.start_notify(CMD_UUID, self._on_cmd)
+                    fw = 0
+                    try:
+                        info = json.loads(bytes(await client.read_gatt_char(INFO_UUID)).decode("utf-8", "replace"))
+                        m = re.search(r"OP(\d+)", str(info.get("fw", "")), re.I)
+                        fw = int(m.group(1)) if m else 0
+                    except Exception:
+                        pass
+                    self._tun_char = None
                     if client.services.get_characteristic(TUNNEL_UUID):
                         await client.start_notify(TUNNEL_UUID, self._on_tunnel)
+                        self._tun_char = TUNNEL_UUID
+                    elif fw >= 43:
+                        self._tun_char = FILES_UUID   # answers arrive on CMD (already subscribed)
+                    if self._tun_char:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
@@ -284,11 +304,13 @@ class BleLink:
                              "error": None, "last": time.monotonic()}
             try:
                 head = "{} {}\n{}\n{}".format(method, path, content_type or "", len(body)).encode("utf-8")
-                await client.write_gatt_char(TUNNEL_UUID, bytes([1, rid, 0]) + head, response=True)
+                char = self._tun_char
+                mux = 0x80 if char == FILES_UUID else 0
+                await client.write_gatt_char(char, bytes([1 | mux, rid, 0]) + head, response=True)
                 seq = 0
                 for i in range(0, len(body), TUNNEL_FRAME):
                     seq = (seq + 1) & 0xFF
-                    await client.write_gatt_char(TUNNEL_UUID, bytes([0, rid, seq]) + body[i:i + TUNNEL_FRAME], response=True)
+                    await client.write_gatt_char(char, bytes([mux, rid, seq]) + body[i:i + TUNNEL_FRAME], response=True)
                     t["last"] = time.monotonic()
                 while not t["done"].is_set():   # the response, as long as it keeps coming
                     try:
@@ -301,7 +323,7 @@ class BleLink:
                 return bytes(t["data"])
             except asyncio.CancelledError:
                 try:
-                    await client.write_gatt_char(TUNNEL_UUID, bytes([4, rid, 0]), response=True)
+                    await client.write_gatt_char(self._tun_char, bytes([4 | (0x80 if self._tun_char == FILES_UUID else 0), rid, 0]), response=True)
                 except Exception:
                     pass
                 raise

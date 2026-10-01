@@ -651,8 +651,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             if not self._ble or self._ble.state != "connected":
                 tried.append("Bluetooth: the link isn't connected")
             else:
-                tried.append("Bluetooth: connected, but the KNOMI doesn't offer its pages (firmware older than "
-                             "OP41, or the Pi still has its old list of Bluetooth features; it reconnects to refresh)")
+                tried.append("Bluetooth: connected, but the KNOMI doesn't offer its pages yet (firmware older than "
+                             "OP43 on a Pi paired before OP41; it reconnects a few times to refresh)")
             raise IOError(" · ".join(tried))
         key = (self._knomi.get("fw"), target)
         if method == "GET" and key in self._page_cache:
