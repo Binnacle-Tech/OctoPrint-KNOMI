@@ -70,6 +70,10 @@
             self.root.appendChild(el("div", {"class": "alert alert-error"}, [
                 "Couldn't read the KNOMI's settings: " + e.message + " ",
                 el("button", {"class": "btn btn-small", onclick: function () { self.load(); }}, ["Try again"])]));
+            // firmware before OP44 doesn't describe its settings: offer the update that brings it
+            self.root.appendChild(el("div", {"class": "well well-small"}, [self.firmwareField({
+                l: "Update the KNOMI (KNOMI 2)", repo: "Binnacle-Tech/KNOMI", asset: "knomiv2-octoprint-firmware.bin",
+                h: "Firmware older than OP44 can't show its settings here. This installs the latest release over WiFi or Bluetooth."})]));
         });
     };
 
