@@ -203,7 +203,7 @@ class BleLink:
                 async with BleakClient(target, timeout=20.0,
                                        disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
                     await client.start_notify(CMD_UUID, self._on_cmd)
-                    fw = 0
+                    fw = 0   # 0: couldn't tell
                     try:
                         info = json.loads(bytes(await client.read_gatt_char(INFO_UUID)).decode("utf-8", "replace"))
                         m = re.search(r"OP(\d+)", str(info.get("fw", "")), re.I)
@@ -214,8 +214,11 @@ class BleLink:
                     if client.services.get_characteristic(TUNNEL_UUID):
                         await client.start_notify(TUNNEL_UUID, self._on_tunnel)
                         self._tun_char = TUNNEL_UUID
-                    elif fw >= 43:
-                        self._tun_char = FILES_UUID   # answers arrive on CMD (already subscribed)
+                    elif fw >= 43 or fw == 0:
+                        # answers arrive on CMD (already subscribed). fw 0: with BlueZ's old list, the INFO
+                        # read lands on a handle that moved when OP41 added TUNNEL, so the version can't be
+                        # read either. Try the FILES route; firmware before OP43 just doesn't answer.
+                        self._tun_char = FILES_UUID
                     if self._tun_char:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
@@ -317,7 +320,8 @@ class BleLink:
                         await asyncio.wait_for(t["done"].wait(), 1.0)
                     except asyncio.TimeoutError:
                         if time.monotonic() - t["last"] > 20:
-                            raise IOError("the KNOMI stopped answering")
+                            raise IOError("the KNOMI stopped answering" + (
+                                " (its firmware may be older than OP43)" if char == FILES_UUID and not t["data"] else ""))
                 if t["error"]:
                     raise IOError(t["error"])
                 return bytes(t["data"])
