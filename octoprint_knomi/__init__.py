@@ -399,7 +399,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                  "template": "knomi_sidebar.jinja2"}]
 
     def get_assets(self):
-        return {"js": ["js/knomi.js", "js/coaster.js"]}
+        return {"js": ["js/knomi_device.js", "js/knomi.js", "js/coaster.js"]}
 
     def on_after_startup(self):
         self._ble = BleLink(self, self._logger)
@@ -479,7 +479,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def get_api_commands(self):
         return {"wifi_on": [], "coaster": [], "coaster_watch": [], "ble_scan": [], "ble_pair": ["address"],
-                "ble_code": ["code"], "ble_cancel": [], "ble_forget": [], "ble_reconnect": []}
+                "ble_code": ["code"], "ble_cancel": [], "ble_forget": [], "ble_reconnect": [],
+                "fw_install": ["repo", "asset"]}
 
     def _on_paired(self, address):
         """Pairing worked (pairing thread): remember the KNOMI and connect."""
@@ -573,6 +574,16 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._settings.save()
             ok = self._pairer.forget(address) if address else True
             return flask.jsonify(ok=ok)
+        if command == "fw_install":
+            from octoprint.access.permissions import Permissions
+            if not Permissions.SETTINGS.can():
+                return flask.make_response(flask.jsonify(error="Not allowed"), 403)
+            repo, asset = str(data.get("repo", "")), str(data.get("asset", ""))
+            if not re.match(r"^[\w.-]+/[\w.-]+$", repo) or not re.match(r"^[\w.-]+\.bin$", asset):
+                return flask.make_response(flask.jsonify(error="Bad release name"), 400)
+            if not self._fw_start(lambda: self._fw_download(repo, asset)):
+                return flask.make_response(flask.jsonify(error="An update is already running"), 409)
+            return flask.jsonify(ok=True)
         if command == "ble_reconnect" and self._ble:
             self._ble.stop()
             if self._settings.get_boolean(["ble_enabled"]):
@@ -580,6 +591,68 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             return flask.jsonify(ok=True)
 
     # ---- updates -----------------------------------------------------------
+
+    # ---- firmware: the plugin fetches it and sends it to the KNOMI (WiFi or Bluetooth) ----
+
+    def _fw_start(self, get_image):
+        if self._fw.get("state") in ("downloading", "sending"):
+            return False
+        self._fw = {"state": "downloading", "msg": "Getting the firmware"}
+        threading.Thread(target=self._fw_run, args=(get_image,), daemon=True, name="knomi-fw").start()
+        return True
+
+    def _fw_download(self, repo, asset):
+        import requests
+        r = requests.get("https://api.github.com/repos/{}/releases/latest".format(repo), timeout=20,
+                         headers={"Accept": "application/vnd.github+json"})
+        r.raise_for_status()
+        rel = r.json()
+        url = next((a["browser_download_url"] for a in rel.get("assets", []) if a.get("name") == asset), None)
+        if not url:
+            raise IOError("the latest release ({}) has no {}".format(rel.get("tag_name", "?"), asset))
+        self._fw["msg"] = "Downloading " + rel.get("tag_name", "")
+        r = requests.get(url, timeout=120)
+        r.raise_for_status()
+        return r.content, rel.get("tag_name", "")
+
+    def _fw_run(self, get_image):
+        import hashlib
+        try:
+            image, name = get_image()
+            if len(image) < 100000 or image[:1] != b"\xe9":
+                raise IOError("that isn't an ESP32 firmware image")
+            md5 = hashlib.md5(image).hexdigest()
+            boundary = "knomi" + md5[:16]
+            body = ("--{b}\r\nContent-Disposition: form-data; name=\"MD5\"\r\n\r\n{m}\r\n"
+                    "--{b}\r\nContent-Disposition: form-data; name=\"firmware\"; filename=\"firmware.bin\"\r\n"
+                    "Content-Type: application/octet-stream\r\n\r\n").format(b=boundary, m=md5).encode()
+            body += image + "\r\n--{}--\r\n".format(boundary).encode()
+            self._fw.update(state="sending", msg="Sending {} to the KNOMI".format(name or "the firmware"), pct=0)
+
+            def progress(sent):
+                self._fw["pct"] = min(100, int(sent * 100 / len(body)))
+            status, _h, content, via = self._knomi_fetch("POST", "/update", "multipart/form-data; boundary=" + boundary,
+                                                          body, progress=progress)
+            if status != 200:
+                raise IOError("the KNOMI said {}: {}".format(status, content[:200].decode("utf-8", "replace")))
+            self._fw = {"state": "done", "msg": "Installed {} over {}. The KNOMI is restarting.".format(name or "the firmware", via)}
+            self._page_cache.clear()
+        except Exception as e:
+            self._logger.info("KNOMI firmware install failed: %s", e)
+            self._fw = {"state": "error", "msg": "Not installed: {}".format(e)}
+
+    @octoprint.plugin.BlueprintPlugin.route("/fw_upload", methods=["POST"])
+    def fw_upload(self):
+        from octoprint.access.permissions import Permissions
+        if not Permissions.SETTINGS.can():
+            return flask.make_response(flask.jsonify(error="Not allowed"), 403)
+        f = flask.request.files.get("firmware")
+        if not f:
+            return flask.make_response(flask.jsonify(error="No file"), 400)
+        image, name = f.read(), f.filename or "the .bin"
+        if not self._fw_start(lambda: (image, name)):
+            return flask.make_response(flask.jsonify(error="An update is already running"), 409)
+        return flask.jsonify(ok=True)
 
     # ---- the KNOMI's own web pages, through OctoPrint -------------------------
     # /plugin/knomi/k/<path> forwards to the KNOMI: over WiFi when it's on, otherwise over Bluetooth
@@ -628,7 +701,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._settings.set(["knomi_ip"], ip)
             self._settings.save()
 
-    def _knomi_fetch(self, method, target, ctype, body):
+    def _knomi_fetch(self, method, target, ctype, body, progress=None):
         """(status, headers, body, "WiFi"/"Bluetooth") from the KNOMI."""
         ip = self._knomi.get("ip") or self._settings.get(["knomi_ip"])
         now = time.time()
@@ -660,7 +733,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         raw = None
         for attempt in range(2):
             try:
-                raw = self._ble.request(method, target, ctype, body)
+                raw = self._ble.request(method, target, ctype, body, progress=progress)
                 break
             except IOError as e:
                 if method != "GET" or attempt or "lost" not in str(e):
@@ -672,7 +745,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def bodysize_hook(self, current_max_body_sizes, *args, **kwargs):
         # GIF uploads (1.5 MB) and firmware files (3 MB+) go through the proxy
-        return [("POST", r"/k/.*", 8 * 1024 * 1024)]
+        return [("POST", r"/k/.*", 8 * 1024 * 1024), ("POST", r"/fw_upload", 8 * 1024 * 1024)]
 
     def get_update_information(self):
         """OctoPrint's Software Update checks GitHub for new commits on main and offers
@@ -706,6 +779,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         k["seen_s"] = round(time.time() - k.pop("seen")) if self._knomi["seen"] else None
         result["knomi"] = k
         result["plugin_version"] = self._plugin_version
+        result["fw_update"] = self._fw
         return flask.jsonify(result)
 
 

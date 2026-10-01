@@ -12,19 +12,16 @@
   <div class="muted" style="margin-top:6px" data-bind="text: coasterLine, visible: coasterLine"></div>
 </div>
 
-<!-- the KNOMI's own pages (settings, animations, print screen, Coaster, firmware, log), through OctoPrint:
-     over WiFi when it's on, over Bluetooth when it isn't -->
-<div class="well well-small" style="margin-bottom:14px">
-  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px">
-    <b>KNOMI's own settings</b>
-    <span class="muted">All of the KNOMI's web pages, here in OctoPrint. Works with the KNOMI's WiFi off, over Bluetooth (slower; uploads take a while).</span>
+<!-- the KNOMI's own settings, drawn from what the KNOMI says it has (static/js/knomi_device.js): over WiFi when
+     it's on, over Bluetooth when it isn't -->
+<div style="margin-bottom:14px">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:8px">
+    <b style="font-size:16px">KNOMI's own settings</b>
+    <span class="muted">Works with the KNOMI's WiFi off, over Bluetooth.</span>
     <span style="flex:1"></span>
-    <button class="btn btn-small btn-primary" data-bind="click: openPages, visible: !pagesOpen()"><i class="fa fa-sliders"></i> Open here</button>
-    <button class="btn btn-small" data-bind="click: closePages, visible: pagesOpen"><i class="fa fa-times"></i> Close</button>
-    <a class="btn btn-small" target="_blank" rel="noopener" data-bind="attr: {href: pagesUrl}"><i class="fa fa-external-link"></i> New tab</a>
+    <a class="btn btn-small" target="_blank" rel="noopener" data-bind="attr: {href: pagesUrl}" title="The KNOMI's web pages: print screen designer, Coaster's page"><i class="fa fa-external-link"></i> KNOMI's web pages</a>
   </div>
-  <iframe data-bind="visible: pagesOpen, attr: {src: pagesSrc}" title="KNOMI settings"
-          style="width:100%;height:75vh;min-height:520px;border:1px solid #26333E;border-radius:8px;margin-top:10px;background:#0E1419"></iframe>
+  <div id="knomi_device_settings"></div>
 </div>
 
 <form class="form-horizontal" onsubmit="return false;">

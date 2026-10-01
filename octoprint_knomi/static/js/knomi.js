@@ -11,10 +11,7 @@ $(function () {
         self.coasterLine = ko.observable("");
         // the KNOMI's own pages through the plugin's proxy (/plugin/knomi/k/)
         self.pagesUrl = ko.observable((window.BASEURL || "/") + "plugin/knomi/k/");
-        self.pagesOpen = ko.observable(false);
-        self.pagesSrc = ko.observable("about:blank");
-        self.openPages = function () { self.pagesSrc(self.pagesUrl()); self.pagesOpen(true); };
-        self.closePages = function () { self.pagesOpen(false); self.pagesSrc("about:blank"); };
+        self.device = null;   // the KNOMI's own settings (knomi_device.js)
         self.pluginVersion = ko.observable("");
         // Bluetooth link
         self.bleStateText = ko.observable("off");
@@ -111,11 +108,12 @@ $(function () {
         var timer = null;
         self.onSettingsShown = function () {
             self.refresh();
+            if (!self.device) self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
+            self.device.load();
             if (!timer) timer = setInterval(self.refresh, 1500);
         };
         self.onSettingsHidden = function () {
             if (timer) { clearInterval(timer); timer = null; }
-            self.closePages();
         };
     }
 

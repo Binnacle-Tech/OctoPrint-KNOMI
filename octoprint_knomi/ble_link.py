@@ -282,21 +282,21 @@ class BleLink:
     def tunnel_ready(self):
         return self._client is not None and self._aloop is not None
 
-    def request(self, method, path, content_type="", body=b"", timeout=None):
+    def request(self, method, path, content_type="", body=b"", timeout=None, progress=None):
         """One HTTP request to the KNOMI's web server over Bluetooth (any thread). Returns the raw
         HTTP response bytes; raises on failure."""
         if not self.tunnel_ready():
             raise IOError("the KNOMI isn't connected over Bluetooth (or its firmware is older than OP41)")
         if timeout is None:
             timeout = 30 + len(body) / 8000.0   # uploads crawl over Bluetooth
-        fut = asyncio.run_coroutine_threadsafe(self._tunnel_request(method, path, content_type, body), self._aloop)
+        fut = asyncio.run_coroutine_threadsafe(self._tunnel_request(method, path, content_type, body, progress), self._aloop)
         try:
             return fut.result(timeout)
         except Exception:
             fut.cancel()
             raise
 
-    async def _tunnel_request(self, method, path, content_type, body):
+    async def _tunnel_request(self, method, path, content_type, body, progress=None):
         async with self._tun_lock:
             client = self._client
             if client is None:
@@ -315,6 +315,8 @@ class BleLink:
                     seq = (seq + 1) & 0xFF
                     await client.write_gatt_char(char, bytes([mux, rid, seq]) + body[i:i + TUNNEL_FRAME], response=True)
                     t["last"] = time.monotonic()
+                    if progress:
+                        progress(i + TUNNEL_FRAME)
                 while not t["done"].is_set():   # the response, as long as it keeps coming
                     try:
                         await asyncio.wait_for(t["done"].wait(), 1.0)
