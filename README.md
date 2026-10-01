@@ -47,7 +47,7 @@ The first check after installing may offer an update even if you're current; ins
    The plugin pairs, trusts and remembers it, then connects. No `bluetoothctl` needed.
 3. OctoPrint → Settings → **KNOMI** → tick **Connect to the KNOMI over Bluetooth**.
 
-Settings › KNOMI › **KNOMI's own settings** shows every setting the KNOMI has, right in OctoPrint, over WiFi or, with the KNOMI's WiFi off, over Bluetooth (KNOMI firmware OP44+). The KNOMI describes its settings (`/settings.json`) and the plugin draws the forms from that, so new firmware can add or move settings without a plugin update. Firmware updates from there: the plugin downloads the release from GitHub (or takes a `.bin`) and sends it to the KNOMI.
+Settings › KNOMI › **KNOMI's own settings** shows every setting the KNOMI has, right in OctoPrint, over WiFi or, with the KNOMI's WiFi off, over Bluetooth (KNOMI firmware OP45+). The KNOMI describes its settings (`/settings.json`) and the plugin draws the forms from that, so new firmware can add or move settings without a plugin update. Firmware updates from there: the plugin downloads the release from GitHub (or takes a `.bin`) and sends it to the KNOMI.
 
 Once connected, the KNOMI can turn its WiFi off. It comes back on its own if Bluetooth drops. The full guide is in [OCTOPRINT.md](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#bluetooth).
 
