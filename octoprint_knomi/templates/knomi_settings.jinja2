@@ -88,10 +88,11 @@
     </div>
   </div>
 
-  <div class="control-group" data-bind="visible: bleConnected">
+  <div class="control-group" data-bind="visible: settings.settings.plugins.knomi.ble_enabled">
     <div class="controls">
-      <button class="btn" data-bind="click: wifiOn"><i class="fa fa-wifi"></i> Turn KNOMI WiFi on for 10 minutes</button>
-      <span class="help-block">If the KNOMI switched its WiFi off while on Bluetooth, this brings it back so you can open its web page.</span>
+      <button class="btn" data-bind="click: wifiOn, enable: bleConnected"><i class="fa fa-wifi"></i> Turn KNOMI WiFi on for 10 minutes</button>
+      <span class="help-block" data-bind="visible: bleConnected">If the KNOMI switched its WiFi off while on Bluetooth, this brings it back.</span>
+      <span class="help-block" data-bind="visible: !bleConnected()">Needs the Bluetooth link. While it's down, the KNOMI turns its WiFi back on by itself after its fallback time.</span>
     </div>
   </div>
 
