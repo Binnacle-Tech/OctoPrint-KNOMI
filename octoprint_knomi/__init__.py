@@ -116,6 +116,29 @@ def inject_proxy_script(content, via):
     return script + content
 
 
+def request_body(req):
+    """(body bytes, content type) of a POST to pass on to the KNOMI. If something already parsed the form
+    (OctoPrint's CSRF check reads request.form), the raw body is gone: build it again from what was parsed."""
+    ctype = req.headers.get("Content-Type", "")
+    body = req.get_data(cache=True)
+    if body or not (req.form or req.files):
+        return body, ctype
+    if not req.files:
+        from urllib.parse import urlencode
+        return urlencode(list(req.form.items(multi=True))).encode("utf-8"), "application/x-www-form-urlencoded"
+    import uuid
+    b = "knomi" + uuid.uuid4().hex
+    out = bytearray()
+    for k, v in req.form.items(multi=True):
+        out += '--{}\r\nContent-Disposition: form-data; name="{}"\r\n\r\n'.format(b, k).encode("utf-8") + v.encode("utf-8") + b"\r\n"
+    for k, f in req.files.items(multi=True):
+        out += ('--{}\r\nContent-Disposition: form-data; name="{}"; filename="{}"\r\nContent-Type: {}\r\n\r\n'.format(
+            b, k, (f.filename or "file").replace('"', ""), f.mimetype or "application/octet-stream")).encode("utf-8")
+        out += f.read() + b"\r\n"
+    out += "--{}--\r\n".format(b).encode()
+    return bytes(out), "multipart/form-data; boundary=" + b
+
+
 def parse_http_response(raw):
     """(status, [(header, value)], body) from raw HTTP/1.1 response bytes (chunked or not)."""
     import http.client
@@ -726,8 +749,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             return flask.make_response("Only users who may change settings can open the KNOMI's pages.", 403)
         req = flask.request
         target = "/" + path + ("?" + req.query_string.decode("latin-1") if req.query_string else "")
-        body = req.get_data() if req.method == "POST" else b""
-        ctype = req.headers.get("Content-Type", "") if req.method == "POST" else ""
+        body, ctype = request_body(req) if req.method == "POST" else (b"", "")
         try:
             status, headers, content, via = self._knomi_fetch(req.method, target, ctype, body)
         except Exception as e:
