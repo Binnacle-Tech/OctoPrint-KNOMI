@@ -47,11 +47,23 @@ $(function () {
         };
         self.onStartup = function () {
             OctoPrint.simpleApiGet("knomi").done(function (r) { self.apply(r && r.coaster); });
-            requestAnimationFrame(frame);
+            // draw only while the canvas is on screen: a collapsed sidebar (Bootstrap collapses to height 0, so
+            // offsetParent stays set), a scrolled-away one or a hidden tab costs nothing
+            var cv = document.getElementById("knomi_coaster_canvas");
+            if (cv && window.IntersectionObserver) {
+                new IntersectionObserver(function (es) {
+                    var e = es[es.length - 1];
+                    onScreen = e.isIntersecting && e.intersectionRect.height > 0;
+                    wake();
+                }).observe(cv);
+            } else {
+                onScreen = true;
+            }
+            document.addEventListener("visibilitychange", wake);
+            wake();
             // tell the plugin someone is watching, so the KNOMI sends head motion
             setInterval(function () {
-                var cv = document.getElementById("knomi_coaster_canvas");
-                if (cv && cv.offsetParent && !document.hidden) OctoPrint.simpleApiCommand("knomi", "coaster_watch", {});
+                if (visible()) OctoPrint.simpleApiCommand("knomi", "coaster_watch", {});
             }, 5000);
         };
         self.onDataUpdaterPluginMessage = function (plugin, data) {
@@ -345,10 +357,22 @@ $(function () {
             ctx.stroke();
         }
 
-        function frame(t) {
-            requestAnimationFrame(frame);
+        var onScreen = false, running = false;
+        function visible() {
             var cv = document.getElementById("knomi_coaster_canvas");
-            if (!cv || document.hidden || !cv.offsetParent) { last = t; return; }
+            return !!(cv && onScreen && !document.hidden && cv.offsetParent);
+        }
+        function wake() {
+            if (running || !visible()) return;
+            running = true;
+            last = 0;
+            requestAnimationFrame(frame);
+        }
+        function frame(t) {
+            var cv = document.getElementById("knomi_coaster_canvas");
+            if (!visible()) { running = false; return; }   // wake() starts it again
+            requestAnimationFrame(frame);
+            if (last && t - last < 30) return;   // ~30 fps is plenty (and half the work on 60-144 Hz screens)
             var dt = Math.min(0.1, (t - last) / 1000 || 0); last = t; now += dt; moodT += dt;
             var mood = st.mood;
             // expression: the mood, tinted by how it feels (same as the firmware)

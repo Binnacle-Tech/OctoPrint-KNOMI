@@ -26,8 +26,9 @@ TUNNEL_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000006"   # the KNOMI's web pages o
 TUNNEL_FRAME = 509    # data bytes per frame (512-byte attribute, 3-byte header)
 
 HEARTBEAT_S = 2.0
-POLL_S = 0.25
-RETRY_S = 5.0
+POLL_S = 1.0          # status at least this often; changes go out right away (poke())
+RETRY_S = 5.0         # first retry; doubles per failure up to RETRY_MAX_S (Bluetooth shares the Pi's WiFi radio)
+RETRY_MAX_S = 120.0
 FILES_MAX = 1023      # KNOMI roller buffer
 FILES_CHUNK = 400
 
@@ -101,6 +102,9 @@ class BleLink:
         self.address = ""
         self.last_error = ""
         self._use_path = False
+        self._fails = 0               # failed attempts in a row (retry backoff)
+        self._loop = None             # the link thread's asyncio loop and its wake-up event (poke())
+        self._wake = None
 
     # ---- control (any thread) ----------------------------------------
 
@@ -115,6 +119,7 @@ class BleLink:
 
     def stop(self):
         self._stop.set()
+        self.poke()
         self._gen += 1   # whatever is running now is done, even if it doesn't notice within the join
         if self._thread:
             self._thread.join(timeout=2)
@@ -124,9 +129,23 @@ class BleLink:
 
     def request_wifi(self):
         self._wifi_request = True
+        self.poke()
 
     def files_changed(self):
         self._files_dirty = True
+        self.poke()
+
+    def poke(self, retry=False):
+        """Something changed (any thread): send the status now. retry=True also cuts a retry wait short
+        (the KNOMI just showed up over WiFi, so it's on)."""
+        if retry:
+            self._fails = 0
+        loop, ev = self._loop, self._wake
+        if loop is not None and ev is not None:
+            try:
+                loop.call_soon_threadsafe(ev.set)
+            except RuntimeError:   # loop already closed
+                pass
 
     # ---- link thread ------------------------------------------------------
 
@@ -177,6 +196,8 @@ class BleLink:
             self._logger.exception("KNOMI BLE command failed: %s", path)
 
     async def _main(self):
+        self._wake = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
         try:
             from bleak import BleakClient
         except ImportError:
@@ -191,7 +212,8 @@ class BleLink:
                     if self.state != "not found":
                         self._logger.info("KNOMI BLE: no KNOMI found. Is Bluetooth on in the KNOMI's settings, and has the Pi paired with it?")
                     self.state = "not found"
-                    await self._sleep(10)
+                    self._fails += 1
+                    await self._sleep(min(10.0 * 2 ** min(self._fails - 1, 5), 300.0))
                     continue
                 self.state = "connecting"
                 self.address = address
@@ -231,6 +253,7 @@ class BleLink:
                         self._tun_refreshed += 1
                         self._refresh_at = time.monotonic() + (5, 20, 60, 300)[self._tun_refreshed - 1]
                     self.state = "connected"
+                    self._fails = 0
                     self.last_error = ""
                     self._files_dirty = True
                     self._logger.info("KNOMI BLE connected to %s", address)
@@ -259,7 +282,7 @@ class BleLink:
                             out = payload[:-1] + ',"ts":{},"tz":{}}}'.format(int(time.time()), int(lt.tm_gmtoff // 60)).encode()
                             await client.write_gatt_char(STATUS_UUID, out, response=True)
                             last, last_t = payload, now
-                        await asyncio.sleep(POLL_S)
+                        await self._nap(POLL_S)
                 self._client = None
             except (FileNotFoundError, ConnectionRefusedError):
                 self._client = None
@@ -279,7 +302,8 @@ class BleLink:
                 self._logger.info("KNOMI BLE: %s", msg)
             if not self._halted():
                 self.state = "disconnected"
-                await self._sleep(RETRY_S)
+                self._fails += 1
+                await self._sleep(min(RETRY_S * 2 ** min(self._fails - 1, 6), RETRY_MAX_S))
         if getattr(self._local, "gen", None) == self._gen:
             self.state = "off"
 
@@ -363,7 +387,21 @@ class BleLink:
         if flags & 2:
             t["done"].set()
 
+    async def _nap(self, seconds):
+        """Wait up to seconds, or until poke(). True if poked."""
+        try:
+            await asyncio.wait_for(self._wake.wait(), seconds)
+            poked = True
+        except asyncio.TimeoutError:
+            poked = False
+        self._wake.clear()
+        return poked
+
     async def _sleep(self, seconds):
+        """A retry wait: ends early on stop() or poke(retry=True)."""
         end = time.monotonic() + seconds
         while not self._halted() and time.monotonic() < end:
-            await asyncio.sleep(0.25)
+            fails = self._fails
+            await self._nap(min(1.0, end - time.monotonic()))
+            if fails and not self._fails:   # poke(retry=True): try now
+                return

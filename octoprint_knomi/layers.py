@@ -139,6 +139,8 @@ def scan(path):
                         cand = (line_start, z)
                     else:
                         cand = None
+                if len(by_comment) >= 2:
+                    continue   # the slicer marks its layers: the extrusion check below is only for files that don't
                 m = _E.search(code)
                 if m:
                     e = float(m.group(1))

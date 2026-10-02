@@ -73,6 +73,7 @@ $(function () {
             else if (r.ble_error) d = r.ble_error;
             else if (st === "not found") d = "no paired KNOMI found. Pair one below.";
             self.bleDetail(d);
+            self.fwState = (r.fw_update || {}).state;
             // pairing
             var p = r.pair || {};
             if (p.status) {
@@ -87,7 +88,10 @@ $(function () {
             return OctoPrint.simpleApiGet("knomi").done(self.update);
         };
         function cmd(name, data) {
-            return OctoPrint.simpleApiCommand("knomi", name, data || {}).always(self.refresh);
+            return OctoPrint.simpleApiCommand("knomi", name, data || {}).always(function () {
+                if (on) { if (timer) { clearTimeout(timer); timer = null; } tick(); }   // and poll fast while it matters
+                else self.refresh();
+            });
         }
         self.scan = function () { self.pairStatus("scanning"); self.pairMessage("Looking for KNOMIs nearby..."); cmd("ble_scan"); };
         self.pair = function (item) { self.pairStatus("pairing"); self.pairMessage("Connecting to the KNOMI..."); cmd("ble_pair", {address: item.address}); };
@@ -105,18 +109,41 @@ $(function () {
             });
         };
 
-        var timer = null;
-        self.onSettingsShown = function () {
-            self.refresh();
-            if (!timer) timer = setInterval(self.refresh, 1500);
+        // Only while the KNOMI tab itself is open (onSettingsShown fires for the whole Settings dialog, and the
+        // KNOMI's settings may come over Bluetooth): every 5 s, every 1.5 s while pairing or installing.
+        var timer = null, on = false;
+        function tabOpen() {
+            var pane = document.getElementById("settings_plugin_knomi");
+            return !!(pane && $(pane).hasClass("active") && pane.offsetParent);
+        }
+        function tick() {
+            timer = null;
+            if (!on) return;
+            var p = (document.hidden ? null : self.refresh());
+            var again = function () {
+                if (!on || timer) return;
+                var fast = self.pairBusy() || /^(downloading|sending)$/.test(self.fwState || "");
+                timer = setTimeout(tick, fast ? 1500 : 5000);
+            };
+            if (p && p.always) p.always(again); else again();
+        }
+        function start() {
+            if (on) return;
+            on = true;
+            tick();
             try {   // the KNOMI's own settings; a problem there mustn't take the link controls with it
                 if (!self.device) self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
                 self.device.load();
             } catch (e) { console.error("KNOMI settings:", e); }
-        };
-        self.onSettingsHidden = function () {
-            if (timer) { clearInterval(timer); timer = null; }
-        };
+        }
+        function stop() {
+            on = false;
+            if (timer) { clearTimeout(timer); timer = null; }
+        }
+        function check() { if (tabOpen()) start(); else stop(); }
+        $(document).on("shown", 'a[data-toggle="tab"]', function () { setTimeout(check, 0); });
+        self.onSettingsShown = function () { setTimeout(check, 0); };
+        self.onSettingsHidden = stop;
     }
 
     OCTOPRINT_VIEWMODELS.push({

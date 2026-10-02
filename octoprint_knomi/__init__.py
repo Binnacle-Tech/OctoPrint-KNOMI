@@ -200,13 +200,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._layer = (0, None)  # (layer, Z mm) at OctoPrint's file position
         self._layer_timer = None
         self._fw = {"state": "idle"}   # firmware install: state, msg, pct
+        self._scan_cache = {}          # (path, mtime, size) -> LayerMap, the last few files printed
         self._fw_latest = ""           # newest KNOMI firmware release on GitHub, e.g. "OP46"
         self._fw_told = ""             # the release Coaster already announced
 
     # ---- helpers ---------------------------------------------------------
 
-    def _flag_for_command(self, cmd):
-        parts = cmd.strip().upper().split()
+    def _flag_for_command(self, cmd, parts=None):
+        parts = parts if parts is not None else cmd.strip().upper().split()
         if not parts:
             return None
         word = parts[0]
@@ -234,6 +235,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             if status == self._last_pushed:
                 return
             self._last_pushed = status
+            if self._ble:
+                self._ble.poke()   # the Bluetooth link sends it now instead of at its next poll
             try:
                 self._plugin_manager.send_plugin_message(self._identifier, status)
             except Exception:
@@ -281,9 +284,17 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
         def work():
             try:
-                t0 = time.monotonic()
-                lm = layers.scan(disk)
-                self._logger.info("KNOMI: %s has %d layers (scanned in %.1f s)", path, lm.total, time.monotonic() - t0)
+                import os
+                st = os.stat(disk)
+                ck = (disk, st.st_mtime, st.st_size)
+                lm = self._scan_cache.get(ck)   # reprints, and OctoPrint restarting mid-print, skip the scan
+                if lm is None:
+                    t0 = time.monotonic()
+                    lm = layers.scan(disk)
+                    self._logger.info("KNOMI: %s has %d layers (scanned in %.1f s)", path, lm.total, time.monotonic() - t0)
+                    if len(self._scan_cache) >= 4:
+                        self._scan_cache.pop(next(iter(self._scan_cache)))
+                    self._scan_cache[ck] = lm
                 if job == self._layer_job:   # still the same print (a cancelled one's scan can finish late)
                     self._layer_map = lm
             except Exception:
@@ -354,23 +365,25 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         with self._lock:
             if word == "M106" and args.get("P", "0") == "0":
                 try:
-                    self._fan = max(0, min(100, round(float(args.get("S", "255")) * 100 / 255)))
-                    changed = True
+                    fan = max(0, min(100, round(float(args.get("S", "255")) * 100 / 255)))
+                    changed, self._fan = fan != self._fan, fan   # slicers send M106 per feature, mostly unchanged
                 except ValueError:
                     pass
             elif word == "M107" and args.get("P", "0") == "0":
-                self._fan = 0
-                changed = True
+                changed, self._fan = self._fan != 0, 0
             elif word == "M220" and "S" in args:
                 try:
-                    self._speed = max(1, min(999, round(float(args["S"]))))
-                    changed = True
+                    speed = max(1, min(999, round(float(args["S"]))))
+                    changed, self._speed = speed != self._speed, speed
                 except ValueError:
                     pass
         if changed:
             self._push()
 
     def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
+        # this runs for every line sent: moves (nearly all of a print) leave straight away
+        if gcode in ("G0", "G1", "G2", "G3", "G90", "G91", "G92", "M73", "M204", "M205", "M83", "M82"):
+            return
         parts = cmd.strip().upper().split()
         word = parts[0] if parts else ""
         if word == "M117":
@@ -386,7 +399,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._set_paused(True)
         elif word in RESUME_COMMANDS:
             self._set_paused(False)
-        flag = self._flag_for_command(cmd)
+        flag = self._flag_for_command(cmd, parts)
         if flag:
             with self._lock:
                 self._cmd_flags[flag] = time.monotonic()
@@ -610,6 +623,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         rep = data.get("report")
         if isinstance(rep, dict):
             clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
+        if clean == self._coaster:
+            return   # nothing new for the sidebar (the KNOMI also sends now and then just to say it's there)
         self._coaster = clean
         try:
             self._plugin_manager.send_plugin_message(self._identifier, {"coaster": clean})
@@ -619,6 +634,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_api_command(self, command, data):
         if command == "coaster":
             self._knomi.update(ip=flask.request.remote_addr or "", seen=time.time(), via="WiFi")
+            if self._ble and self._ble.state != "connected":
+                self._ble.poke(retry=True)   # it's on: don't sit out a long Bluetooth retry wait
             self._remember_ip(flask.request.remote_addr or "")
             self._wifi_seen = time.time()
             self.coaster_update(data)
@@ -806,7 +823,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 tried.append("Bluetooth: connected, but the KNOMI doesn't offer its pages yet (firmware older than "
                              "OP43 on a Pi paired before OP41; it reconnects a few times to refresh)")
             raise IOError(" · ".join(tried))
-        key = (self._knomi.get("fw"), target)
+        key = (self._knomi.get("fw"), target.split("?")[0])
         if method == "GET" and key in self._page_cache:
             return self._page_cache[key] + ("Bluetooth",)
         raw = None
@@ -819,6 +836,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                     raise
         status, headers, content = parse_http_response(raw)
         if method == "GET" and status == 200 and target.split("?")[0] in CACHEABLE_PAGES:
+            if len(self._page_cache) > 16:   # old firmware versions' copies
+                self._page_cache.clear()
             self._page_cache[key] = (status, headers, content)
         return status, headers, content, "Bluetooth"
 
