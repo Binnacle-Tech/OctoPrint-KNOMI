@@ -116,6 +116,17 @@ def inject_proxy_script(content, via):
     return script + content
 
 
+def latest_release_tag(repo):
+    """The latest release's tag, from github.com's redirect. Not api.github.com: that allows 60 requests an hour
+    per home IP, shared with OctoPrint's own update checks, and then answers 403."""
+    import requests
+    r = requests.head("https://github.com/{}/releases/latest".format(repo), allow_redirects=False, timeout=20)
+    loc = r.headers.get("Location", "")
+    if "/releases/tag/" not in loc:
+        raise IOError("GitHub answered {} for the latest release".format(r.status_code))
+    return loc.rsplit("/releases/tag/", 1)[1]
+
+
 def request_body(req):
     """(body bytes, content type) of a POST to pass on to the KNOMI. If something already parsed the form
     (OctoPrint's CSRF check reads request.form), the raw body is gone: build it again from what was parsed."""
@@ -451,13 +462,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         while True:
             if time.time() - last_check > 6 * 3600:
                 try:
-                    import requests
-                    r = requests.get("https://api.github.com/repos/{}/releases/latest".format(self.FW_REPO), timeout=20,
-                                     headers={"Accept": "application/vnd.github+json"})
-                    if r.ok:
-                        m = re.search(r"op(\d+)", r.json().get("tag_name", ""), re.I)
-                        if m:
-                            self._fw_latest = "OP" + m.group(1)
+                    m = re.search(r"op(\d+)", latest_release_tag(self.FW_REPO), re.I)
+                    if m:
+                        self._fw_latest = "OP" + m.group(1)
                     last_check = time.time()
                 except Exception as e:
                     self._logger.debug("KNOMI: couldn't check for new firmware: %s", e)
@@ -680,17 +687,13 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def _fw_download(self, repo, asset):
         import requests
-        r = requests.get("https://api.github.com/repos/{}/releases/latest".format(repo), timeout=20,
-                         headers={"Accept": "application/vnd.github+json"})
+        tag = latest_release_tag(repo)
+        self._fw["msg"] = "Downloading " + tag
+        r = requests.get("https://github.com/{}/releases/download/{}/{}".format(repo, tag, asset), timeout=120)
+        if r.status_code == 404:
+            raise IOError("the latest release ({}) has no {}".format(tag, asset))
         r.raise_for_status()
-        rel = r.json()
-        url = next((a["browser_download_url"] for a in rel.get("assets", []) if a.get("name") == asset), None)
-        if not url:
-            raise IOError("the latest release ({}) has no {}".format(rel.get("tag_name", "?"), asset))
-        self._fw["msg"] = "Downloading " + rel.get("tag_name", "")
-        r = requests.get(url, timeout=120)
-        r.raise_for_status()
-        return r.content, rel.get("tag_name", "")
+        return r.content, tag
 
     def _fw_run(self, get_image):
         import hashlib
