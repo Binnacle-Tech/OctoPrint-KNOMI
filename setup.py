@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="OctoPrint-KNOMI",
-    version="0.13.4",
+    version="0.13.5",
     description="Companion plugin for the KNOMI OctoPrint firmware: status flags, websocket push and a Bluetooth LE link",
     author="Binnacle-Tech",
     url="https://github.com/Binnacle-Tech/OctoPrint-KNOMI",
