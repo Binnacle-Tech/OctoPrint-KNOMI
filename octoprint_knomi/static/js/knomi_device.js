@@ -52,6 +52,7 @@
         this.root = root;
         this.schema = null;
         this.open = {};   // section id -> shown (kept across reloads)
+        this.said = {};   // section id -> [class, text] of its last save message (kept across the re-read after it)
     }
 
     KnomiDevice.prototype.load = function () {
@@ -89,7 +90,9 @@
     KnomiDevice.prototype.section = function (sec) {
         var self = this;
         var body = el("div", {style: "padding:4px 0 2px"});
-        var status = el("span", {"class": "muted", style: "margin-left:8px"});
+        var said = self.said[sec.id];
+        var status = el("span", {"class": said ? said[0] : "muted", text: said ? said[1] : "", style: "margin-left:8px"});
+        status.sec = sec.id;
         var inner = el("div", {style: self.open[sec.id] ? "" : "display:none"}, [
             sec.h ? el("div", {"class": "muted", text: sec.h, style: "margin:6px 0"}) : null, body]);
         var caret = el("i", {"class": "fa fa-fw " + (self.open[sec.id] ? "fa-caret-down" : "fa-caret-right")});
@@ -230,13 +233,18 @@
         }
         status.className = "muted";
         status.textContent = "Saving…";
+        function show(cls, text) {
+            status.className = cls;
+            status.textContent = text;
+            self.said[sec.id] = [cls, text];
+            clearTimeout(self.said_t);
+            self.said_t = setTimeout(function () { self.said = {}; }, 20000);   // gone at the next re-read after 20 s
+        }
         return req("POST", path, body, ctype).then(answer).then(function (msg) {
-            status.className = "text-success";
-            status.textContent = msg;
+            show("text-success", msg);
             setTimeout(function () { self.refreshQuiet(); }, /Scanning/.test(msg) ? 6000 : 1500);
         }).catch(function (e) {
-            status.className = "text-error";
-            status.textContent = e.message;
+            show("text-error", e.message);
         });
     };
 
