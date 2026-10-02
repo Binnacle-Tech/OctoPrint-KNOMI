@@ -723,7 +723,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             body = ("--{b}\r\nContent-Disposition: form-data; name=\"MD5\"\r\n\r\n{m}\r\n"
                     "--{b}\r\nContent-Disposition: form-data; name=\"firmware\"; filename=\"firmware.bin\"\r\n"
                     "Content-Type: application/octet-stream\r\n\r\n").format(b=boundary, m=md5).encode()
-            body += image + "\r\n--{}--\r\n".format(boundary).encode()
+            body = b"".join((body, image, "\r\n--{}--\r\n".format(boundary).encode()))
             self._fw.update(state="sending", msg="Sending {} to the KNOMI".format(name or "the firmware"), pct=0)
 
             def progress(sent):

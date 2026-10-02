@@ -341,9 +341,10 @@ class BleLink:
                 mux = 0x80 if char == FILES_UUID else 0
                 await client.write_gatt_char(char, bytes([1 | mux, rid, 0]) + head, response=True)
                 seq = 0
+                view = memoryview(body)   # no copy of a 3 MB firmware per frame
                 for i in range(0, len(body), TUNNEL_FRAME):
                     seq = (seq + 1) & 0xFF
-                    await client.write_gatt_char(char, bytes([mux, rid, seq]) + body[i:i + TUNNEL_FRAME], response=True)
+                    await client.write_gatt_char(char, bytes([mux, rid, seq]) + view[i:i + TUNNEL_FRAME], response=True)
                     t["last"] = time.monotonic()
                     if progress:
                         progress(i + TUNNEL_FRAME)
