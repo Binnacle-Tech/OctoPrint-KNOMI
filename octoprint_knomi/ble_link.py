@@ -103,8 +103,7 @@ class BleLink:
         self.last_error = ""
         self._use_path = False
         self._fails = 0               # failed attempts in a row (retry backoff)
-        self._loop = None             # the link thread's asyncio loop and its wake-up event (poke())
-        self._wake = None
+        self._waker = None            # (loop, event) of the running link thread, for poke()
 
     # ---- control (any thread) ----------------------------------------
 
@@ -140,10 +139,10 @@ class BleLink:
         (the KNOMI just showed up over WiFi, so it's on)."""
         if retry:
             self._fails = 0
-        loop, ev = self._loop, self._wake
-        if loop is not None and ev is not None:
+        w = self._waker
+        if w is not None:
             try:
-                loop.call_soon_threadsafe(ev.set)
+                w[0].call_soon_threadsafe(w[1].set)
             except RuntimeError:   # loop already closed
                 pass
 
@@ -196,8 +195,9 @@ class BleLink:
             self._logger.exception("KNOMI BLE command failed: %s", path)
 
     async def _main(self):
-        self._wake = asyncio.Event()
-        self._loop = asyncio.get_running_loop()
+        # this thread's own event (a stopped thread still finishing its connect keeps using its own)
+        self._local.wake = asyncio.Event()
+        self._waker = (asyncio.get_running_loop(), self._local.wake)
         try:
             from bleak import BleakClient
         except ImportError:
@@ -247,7 +247,7 @@ class BleLink:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
-                    elif self._tun_refreshed < 4:
+                    if (not self._tun_char or fw == 0) and self._tun_refreshed < 4:
                         # BlueZ keeps a paired device's list of characteristics; after a firmware update that
                         # added one it can take a reconnect (or a few) before BlueZ looks again
                         self._tun_refreshed += 1
@@ -318,7 +318,7 @@ class BleLink:
         if not self.tunnel_ready():
             raise IOError("the KNOMI isn't connected over Bluetooth (or its firmware is older than OP41)")
         if timeout is None:
-            timeout = 30 + len(body) / 8000.0   # uploads crawl over Bluetooth
+            timeout = 60 + len(body) / 2000.0   # uploads crawl over Bluetooth (a stalled one fails sooner, after 20 s)
         fut = asyncio.run_coroutine_threadsafe(self._tunnel_request(method, path, content_type, body, progress), self._aloop)
         try:
             return fut.result(timeout)
@@ -390,12 +390,13 @@ class BleLink:
 
     async def _nap(self, seconds):
         """Wait up to seconds, or until poke(). True if poked."""
+        wake = self._local.wake
         try:
-            await asyncio.wait_for(self._wake.wait(), seconds)
+            await asyncio.wait_for(wake.wait(), seconds)
             poked = True
         except asyncio.TimeoutError:
             poked = False
-        self._wake.clear()
+        wake.clear()
         return poked
 
     async def _sleep(self, seconds):

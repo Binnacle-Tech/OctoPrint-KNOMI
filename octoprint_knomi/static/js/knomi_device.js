@@ -303,10 +303,13 @@
                 news.textContent = r.fw_new ? "New release: " + r.fw_new : (r.fw_latest ? "Up to date (latest is " + r.fw_latest + ")" : "");
                 news.className = r.fw_new ? "label label-warning" : "muted";
                 var u = r.fw_update || {};
+                var busy = u.state === "downloading" || u.state === "sending";
+                // keep following an install in progress (also after the tab was reopened), stop otherwise
+                if (busy && !timer) timer = setInterval(poll, 1500);
+                if (!busy && timer) { clearInterval(timer); timer = null; }
                 if (!u.state || u.state === "idle") return;
                 st.className = u.state === "error" ? "text-error" : u.state === "done" ? "text-success" : "muted";
                 st.textContent = u.msg + (u.pct !== undefined && u.state === "sending" ? " " + u.pct + "%" : "");
-                if (u.state === "done" || u.state === "error") { clearInterval(timer); timer = null; }
             });
         }
         function started(p) {

@@ -134,6 +134,25 @@ def request_body(req):
     body = req.get_data(cache=True)
     if body or not (req.form or req.files):
         return body, ctype
+    # OctoPrint stores uploaded files in temp files before Flask sees the request and leaves fields
+    # "<name>.path", "<name>.name", "<name>.size", "<name>.content_type" instead: turn them back into files
+    uploads = {k[:-5] for k in req.form if k.endswith(".path") and (k[:-5] + ".name") in req.form}
+    if uploads:
+        import uuid
+        b = "knomi" + uuid.uuid4().hex
+        out = bytearray()
+        helper = {u + sfx for u in uploads for sfx in (".path", ".name", ".size", ".content_type")}
+        for k, v in req.form.items(multi=True):
+            if k not in helper:
+                out += '--{}\r\nContent-Disposition: form-data; name="{}"\r\n\r\n'.format(b, k).encode("utf-8") + v.encode("utf-8") + b"\r\n"
+        for u in uploads:
+            with open(req.form[u + ".path"], "rb") as fh:
+                data = fh.read()
+            out += ('--{}\r\nContent-Disposition: form-data; name="{}"; filename="{}"\r\nContent-Type: {}\r\n\r\n'.format(
+                b, u, req.form[u + ".name"].replace('"', ""), req.form.get(u + ".content_type") or "application/octet-stream")).encode("utf-8")
+            out += data + b"\r\n"
+        out += "--{}--\r\n".format(b).encode()
+        return bytes(out), "multipart/form-data; boundary=" + b
     if not req.files:
         from urllib.parse import urlencode
         return urlencode(list(req.form.items(multi=True))).encode("utf-8"), "application/x-www-form-urlencoded"
@@ -482,7 +501,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 except Exception as e:
                     self._logger.debug("KNOMI: couldn't check for new firmware: %s", e)
                     last_check = time.time() - 5 * 3600   # try again in an hour
-            self._fw_announce()
+            try:
+                self._fw_announce()
+            except Exception:
+                self._logger.exception("KNOMI: firmware notice")
             time.sleep(600)
 
     def _fw_newer(self):
@@ -623,7 +645,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         rep = data.get("report")
         if isinstance(rep, dict):
             clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
-        if clean == self._coaster:
+        if clean == self._coaster and "hx" not in clean:   # head motion doubles as the sidebar's "live" heartbeat
             return   # nothing new for the sidebar (the KNOMI also sends now and then just to say it's there)
         self._coaster = clean
         try:
@@ -632,10 +654,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._logger.exception("Could not push Coaster state")
 
     def on_api_command(self, command, data):
+        if command in ("wifi_on", "ble_scan", "ble_pair", "ble_code", "ble_cancel", "ble_forget", "ble_reconnect"):
+            from octoprint.access.permissions import Permissions
+            if not Permissions.SETTINGS.can():
+                return flask.make_response(flask.jsonify(error="Only users who may change settings can do that"), 403)
         if command == "coaster":
+            if self._ble and self._ble.state != "connected" and time.time() - self._wifi_seen > 300:
+                self._ble.poke(retry=True)   # back after a while: it's on, so don't sit out a long Bluetooth retry wait
             self._knomi.update(ip=flask.request.remote_addr or "", seen=time.time(), via="WiFi")
-            if self._ble and self._ble.state != "connected":
-                self._ble.poke(retry=True)   # it's on: don't sit out a long Bluetooth retry wait
             self._remember_ip(flask.request.remote_addr or "")
             self._wifi_seen = time.time()
             self.coaster_update(data)
@@ -696,9 +722,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     # ---- firmware: the plugin fetches it and sends it to the KNOMI (WiFi or Bluetooth) ----
 
     def _fw_start(self, get_image):
-        if self._fw.get("state") in ("downloading", "sending"):
-            return False
-        self._fw = {"state": "downloading", "msg": "Getting the firmware"}
+        with self._lock:
+            if self._fw.get("state") in ("downloading", "sending"):
+                return False
+            self._fw = {"state": "downloading", "msg": "Getting the firmware"}
         threading.Thread(target=self._fw_run, args=(get_image,), daemon=True, name="knomi-fw").start()
         return True
 
@@ -743,10 +770,17 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         from octoprint.access.permissions import Permissions
         if not Permissions.SETTINGS.can():
             return flask.make_response(flask.jsonify(error="Not allowed"), 403)
-        f = flask.request.files.get("firmware")
-        if not f:
-            return flask.make_response(flask.jsonify(error="No file"), 400)
-        image, name = f.read(), f.filename or "the .bin"
+        # OctoPrint has already stored the upload in a temp file (deleted when this request ends)
+        v = flask.request.values
+        if v.get("firmware.path"):
+            with open(v["firmware.path"], "rb") as fh:
+                image = fh.read()
+            name = v.get("firmware.name") or "the .bin"
+        else:
+            f = flask.request.files.get("firmware")
+            if not f:
+                return flask.make_response(flask.jsonify(error="No file"), 400)
+            image, name = f.read(), f.filename or "the .bin"
         if not self._fw_start(lambda: (image, name)):
             return flask.make_response(flask.jsonify(error="An update is already running"), 409)
         return flask.jsonify(ok=True)
@@ -823,7 +857,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 tried.append("Bluetooth: connected, but the KNOMI doesn't offer its pages yet (firmware older than "
                              "OP43 on a Pi paired before OP41; it reconnects a few times to refresh)")
             raise IOError(" · ".join(tried))
-        key = (self._knomi.get("fw"), target.split("?")[0])
+        key = (self._knomi.get("fw"), target)
         if method == "GET" and key in self._page_cache:
             return self._page_cache[key] + ("Bluetooth",)
         raw = None
