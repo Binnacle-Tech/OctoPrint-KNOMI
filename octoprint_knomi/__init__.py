@@ -755,8 +755,22 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
             def progress(sent):
                 self._fw["pct"] = min(100, int(sent * 100 / len(body)))
-            status, _h, content, via = self._knomi_fetch("POST", "/update", "multipart/form-data; boundary=" + boundary,
-                                                          body, progress=progress)
+            before = self._knomi.get("fw") or ""
+            try:
+                status, _h, content, via = self._knomi_fetch("POST", "/update", "multipart/form-data; boundary=" + boundary,
+                                                              body, progress=progress)
+            except IOError as e:
+                # the KNOMI may have restarted before its answer came back: see what it runs once it's back
+                self._fw.update(msg="No answer from the KNOMI; checking whether it restarted with the new firmware")
+                end = time.time() + 90
+                while time.time() < end and (self._knomi.get("fw") or "") in ("", before):
+                    time.sleep(2)
+                now = self._knomi.get("fw") or ""
+                if now and now != before:
+                    self._fw = {"state": "done", "msg": "Installed: the KNOMI is back on {}.".format(now)}
+                    self._page_cache.clear()
+                    return
+                raise IOError("{} (the KNOMI is still on {})".format(e, before or "its old firmware"))
             if status != 200:
                 raise IOError("the KNOMI said {}: {}".format(status, content[:200].decode("utf-8", "replace")))
             self._fw = {"state": "done", "msg": "Installed {} over {}. The KNOMI is restarting.".format(name or "the firmware", via)}
