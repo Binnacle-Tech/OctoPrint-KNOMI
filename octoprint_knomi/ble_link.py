@@ -224,6 +224,8 @@ class BleLink:
                 target = bluez_device(address) if self._use_path else address
                 async with BleakClient(target, timeout=20.0,
                                        disconnected_callback=lambda _c: loop.call_soon_threadsafe(gone.set)) as client:
+                    if self._halted():   # replaced while this connect was still running: leave the link to the new one
+                        return
                     await client.start_notify(CMD_UUID, self._on_cmd)
                     fw = 0   # 0: couldn't tell
                     try:
@@ -234,6 +236,8 @@ class BleLink:
                             self._plugin.ble_info(str(info["fw"]))
                     except Exception:
                         pass
+                    if self._halted():
+                        return
                     self._tun_char = None
                     if client.services.get_characteristic(TUNNEL_UUID):
                         await client.start_notify(TUNNEL_UUID, self._on_tunnel)
@@ -247,6 +251,8 @@ class BleLink:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
+                    if self._tun_char == TUNNEL_UUID and fw > 0:
+                        self._tun_refreshed = 0   # a healthy link: a later firmware update gets its refreshes again
                     if (not self._tun_char or fw == 0) and self._tun_refreshed < 4:
                         # BlueZ keeps a paired device's list of characteristics; after a firmware update that
                         # added one it can take a reconnect (or a few) before BlueZ looks again
@@ -283,13 +289,18 @@ class BleLink:
                             await client.write_gatt_char(STATUS_UUID, out, response=True)
                             last, last_t = payload, now
                         await self._nap(POLL_S)
-                self._client = None
+                if not self._halted():
+                    self._client = None
             except (FileNotFoundError, ConnectionRefusedError):
+                if self._halted():
+                    return
                 self._client = None
                 msg = "Bluetooth service not available (is bluetoothd running, and is Bluetooth enabled on the Pi?)"
                 self.last_error = msg
                 self._logger.info("KNOMI BLE: %s", msg)
             except Exception as e:
+                if self._halted():   # an old generation's failure isn't the new link's
+                    return
                 self._client = None
                 msg = str(e) or e.__class__.__name__
                 if "not found" in msg.lower() and not self._use_path:
@@ -322,9 +333,12 @@ class BleLink:
         fut = asyncio.run_coroutine_threadsafe(self._tunnel_request(method, path, content_type, body, progress), self._aloop)
         try:
             return fut.result(timeout)
-        except Exception:
+        except OSError:
             fut.cancel()
             raise
+        except Exception as e:   # bleak's errors (and timeouts) as IOError, so callers handle one kind
+            fut.cancel()
+            raise IOError(str(e) or e.__class__.__name__) from e
 
     async def _tunnel_request(self, method, path, content_type, body, progress=None):
         async with self._tun_lock:

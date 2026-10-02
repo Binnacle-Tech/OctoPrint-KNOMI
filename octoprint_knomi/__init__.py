@@ -97,7 +97,8 @@ XMLHttpRequest.prototype.open=function(m){this._km=m;return xo.apply(this,argume
 XMLHttpRequest.prototype.send=function(){if(post(this._km))this.setRequestHeader("X-CSRF-Token",tok);return xs.apply(this,arguments)};
 function send(f,b){var a=(b&&b.getAttribute("formaction"))||f.getAttribute("action")||location.href,fd=new FormData(f);
 if(b&&b.name)fd.append(b.name,b.value||"");document.body.style.opacity=".6";
-of.call(window,new URL(a,location.href),{method:(f.getAttribute("method")||"POST").toUpperCase(),body:fd,credentials:"same-origin",headers:{"X-CSRF-Token":tok}})
+var body=f.querySelector("input[type=file]")?fd:new URLSearchParams(fd);
+of.call(window,new URL(a,location.href),{method:(f.getAttribute("method")||"POST").toUpperCase(),body:body,credentials:"same-origin",headers:{"X-CSRF-Token":tok}})
 .then(function(r){var u=r.url;return r.text().then(function(h){try{history.replaceState(null,"",u)}catch(e){}document.open();document.write(h);document.close()})})
 .catch(function(e){document.body.style.opacity="";alert("Couldn't reach the KNOMI: "+e)})}
 HTMLFormElement.prototype.submit=function(){send(this,null)};
@@ -219,6 +220,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._layer = (0, None)  # (layer, Z mm) at OctoPrint's file position
         self._layer_timer = None
         self._fw = {"state": "idle"}   # firmware install: state, msg, pct
+        self._msg_t = 0.0              # when the last display message was set (MSG_TTL_S)
+        self._coaster_sent = 0.0
+        self._ip_saved = ""
+        self._msg_fw = False           # it's the "new firmware" notice
         self._scan_cache = {}          # (path, mtime, size) -> LayerMap, the last few files printed
         self._fw_latest = ""           # newest KNOMI firmware release on GitHub, e.g. "OP46"
         self._fw_told = ""             # the release Coaster already announced
@@ -270,7 +275,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             status = {f: bool(f in self._cmd_flags or self._marker_flags.get(f)) for f in FLAGS}
         status["fan"] = self._fan
         status["speed"] = self._speed
-        status["msg"] = self._msg
+        status["msg"] = self._msg if time.monotonic() - self._msg_t < self.MSG_TTL_S else ""
         status["msg_id"] = self._msg_id
         # tells the KNOMI which progress OctoPrint's dashboard shows
         status["time_progress"] = self._time_progress()
@@ -368,13 +373,29 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._marker_flags["runout"] = True
         self._push()
 
-    def _set_message(self, text):
+    MSG_TTL_S = 120   # after this a message is no longer sent: a KNOMI that restarts or reconnects later
+                      # doesn't say an old one again ("firmware OP48 is out" right after updating to OP49)
+
+    def _set_message(self, text, fw_notice=False):
         """A display message for the KNOMI (Coaster says it in a speech bubble)."""
         text = " ".join((text or "").split())[:64]
         with self._lock:
             self._msg = text
             self._msg_id += 1
+            self._msg_t = time.monotonic()
+            self._msg_fw = fw_notice
         self._push()
+
+    def _fw_seen(self, fw):
+        """The KNOMI reported its firmware version."""
+        fw = fw[:24]
+        changed = fw != self._knomi.get("fw")
+        self._knomi["fw"] = fw
+        if changed and self._msg_fw and not self._fw_newer():
+            with self._lock:   # its "new firmware" notice is out of date now
+                self._msg, self._msg_fw = "", False
+            self._push()
+        self._fw_announce()
 
     def _track_fan_speed(self, parts):
         """Part fan from M106/M107 (fan 0 only), speed factor from M220."""
@@ -401,7 +422,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def on_gcode_sent(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
         # this runs for every line sent: moves (nearly all of a print) leave straight away
-        if gcode in ("G0", "G1", "G2", "G3", "G90", "G91", "G92", "M73", "M204", "M205", "M83", "M82"):
+        if gcode in ("G0", "G1", "G2", "G3", "G4", "G10", "G11", "G90", "G91", "G92", "M73", "M204", "M205", "M83", "M82",
+                     "M104", "M140", "M400", "M486"):
             return
         parts = cmd.strip().upper().split()
         word = parts[0] if parts else ""
@@ -524,13 +546,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 return   # not in the middle of a print; next time
         except Exception:
             return
+        if self._fw.get("state") in ("downloading", "sending"):
+            return   # being installed right now
         self._fw_told = new
-        self._set_message("KNOMI firmware {} is out. Update in Settings > KNOMI".format(new))
+        self._set_message("KNOMI firmware {} is out. Update in Settings > KNOMI".format(new), fw_notice=True)
 
     def ble_info(self, fw):
         """The KNOMI's firmware version, read when Bluetooth connects."""
-        self._knomi["fw"] = fw[:24]
-        self._fw_announce()
+        self._fw_seen(fw)
 
     def on_shutdown(self):
         if self._ble:
@@ -621,8 +644,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def coaster_update(self, data):
         """The KNOMI reports Coaster's mood, quirk, feeling, decorations, head motion and last report card."""
         if data.get("fw"):
-            self._knomi["fw"] = str(data["fw"])[:24]
-            self._fw_announce()
+            self._fw_seen(str(data["fw"]))
         ip = str(data.get("ip") or "")
         if ip and re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", ip):   # sent by OP41+, also over Bluetooth
             self._remember_ip(ip)
@@ -645,8 +667,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         rep = data.get("report")
         if isinstance(rep, dict):
             clean["report"] = {k: rep.get(k) for k in ("done", "progress", "screams", "dizzies", "jolts", "peak", "secs")}
-        if clean == self._coaster and "hx" not in clean:   # head motion doubles as the sidebar's "live" heartbeat
-            return   # nothing new for the sidebar (the KNOMI also sends now and then just to say it's there)
+        if clean == self._coaster and ("hx" not in clean or time.monotonic() - self._coaster_sent < 1.0):
+            return   # nothing new (head motion doubles as the sidebar's "live" heartbeat: at least once a second)
+        self._coaster_sent = time.monotonic()   # nothing new for the sidebar (the KNOMI also sends now and then just to say it's there)
         self._coaster = clean
         try:
             self._plugin_manager.send_plugin_message(self._identifier, {"coaster": clean})
@@ -759,14 +782,14 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             try:
                 status, _h, content, via = self._knomi_fetch("POST", "/update", "multipart/form-data; boundary=" + boundary,
                                                               body, progress=progress)
-            except IOError as e:
+            except Exception as e:   # IOError, or bleak's own errors when the link drops as the KNOMI restarts
                 # the KNOMI may have restarted before its answer came back: see what it runs once it's back
                 self._fw.update(msg="No answer from the KNOMI; checking whether it restarted with the new firmware")
                 end = time.time() + 90
                 while time.time() < end and (self._knomi.get("fw") or "") in ("", before):
                     time.sleep(2)
                 now = self._knomi.get("fw") or ""
-                if now and now != before:
+                if now and before and now != before:
                     self._fw = {"state": "done", "msg": "Installed: the KNOMI is back on {}.".format(now)}
                     self._page_cache.clear()
                     return
@@ -841,6 +864,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         if not ip:
             return
         self._knomi["ip"] = ip
+        if ip == self._ip_saved:
+            return   # every check-in calls this: skip the settings lookup
+        self._ip_saved = ip
         if self._settings.get(["knomi_ip"]) != ip:
             self._settings.set(["knomi_ip"], ip)
             self._settings.save()
@@ -858,6 +884,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                                      timeout=(2, 60 + len(body) / 50000.0), allow_redirects=False)
                 return r.status_code, list(r.headers.items()), r.content, "WiFi"
             except requests.RequestException as e:
+                if method != "GET" and not isinstance(e, requests.ConnectTimeout):
+                    # it may have got there (a firmware upload the KNOMI restarted after): sending it all again
+                    # over Bluetooth would be a second copy, so report it instead
+                    raise IOError("WiFi ({}): {}".format(ip, e.__class__.__name__))
                 self._wifi_failed = now   # WiFi is probably off: Bluetooth for a while
                 tried.append("WiFi ({}): {}".format(ip, e.__class__.__name__))
         elif not ip:

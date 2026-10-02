@@ -74,6 +74,7 @@ $(function () {
             else if (st === "not found") d = "no paired KNOMI found. Pair one below.";
             self.bleDetail(d);
             self.fwState = (r.fw_update || {}).state;
+            if (self.device) self.device.fwStatus(r);
             // pairing
             var p = r.pair || {};
             if (p.status) {
@@ -132,7 +133,10 @@ $(function () {
             on = true;
             tick();
             try {   // the KNOMI's own settings; a problem there mustn't take the link controls with it
-                if (!self.device) self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
+                if (!self.device) {
+                    self.device = new window.KnomiDevice(document.getElementById("knomi_device_settings"));
+                    self.device.onFwStarted = function () { if (on) { if (timer) { clearTimeout(timer); timer = null; } self.fwState = "downloading"; tick(); } };
+                }
                 self.device.load();
             } catch (e) { console.error("KNOMI settings:", e); }
         }

@@ -84,7 +84,12 @@
         self.root.appendChild(el("div", {"class": "muted", style: "margin-bottom:8px"}, [
             "KNOMI " + (s.fw || "") + " · " + (s.board || "") + " ",
             el("button", {"class": "btn btn-mini", onclick: function () { self.load(); }}, [el("i", {"class": "fa fa-refresh"}), " Reload"])]));
-        s.sections.forEach(function (sec) { self.root.appendChild(self.section(sec)); });
+        self.boxes = {};
+        s.sections.forEach(function (sec) {
+            var box = self.section(sec);
+            self.boxes[sec.id] = box;
+            self.root.appendChild(box);
+        });
     };
 
     KnomiDevice.prototype.section = function (sec) {
@@ -242,34 +247,51 @@
         }
         return req("POST", path, body, ctype).then(answer).then(function (msg) {
             show("text-success", msg);
-            setTimeout(function () { self.refreshQuiet(); }, /Scanning/.test(msg) ? 6000 : 1500);
+            setTimeout(function () { self.refreshQuiet(sec.id); }, /Scanning/.test(msg) ? 6000 : 1500);
         }).catch(function (e) {
             show("text-error", e.message);
         });
     };
 
-    // re-read after a save, keeping the page in place (and the last message) if the KNOMI is busy
-    KnomiDevice.prototype.refreshQuiet = function () {
+    // re-read after a save and redraw just that section (what's being typed in the others stays), keeping the
+    // page where it is; nothing changes if the KNOMI is busy
+    KnomiDevice.prototype.refreshQuiet = function (id) {
         var self = this, y = window.scrollY;
         req("GET", "settings.json").then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
-            if (s && s.sections) { self.schema = s; self.render(); window.scrollTo(0, y); }
+            if (!s || !s.sections) return;
+            self.schema = s;
+            var sec = id && s.sections.filter(function (x) { return x.id === id; })[0];
+            var old = id && self.boxes && self.boxes[id];
+            if (sec && old && old.parentNode) {
+                var box = self.section(sec);
+                old.parentNode.replaceChild(box, old);
+                self.boxes[id] = box;
+            } else {
+                self.render();
+            }
+            window.scrollTo(0, y);
         }).catch(function () {});
     };
 
     KnomiDevice.prototype.fileField = function (sec, f, id, status) {
         var self = this;
         var file = el("input", {type: "file", id: id, accept: f.accept, style: "max-width:220px"});
-        var st = el("span", {"class": "muted", text: f.v || "", style: "font-size:12px"});
+        var key = sec.id + "/" + f.post, said = self.said[key];
+        var st = el("span", {"class": said ? said[0] : "muted", text: said ? said[1] : (f.v || ""), style: "font-size:12px"});
+        function show(cls, text) {   // kept across the re-read after it, like the sections' messages
+            st.className = cls;
+            st.textContent = text;
+            self.said[key] = [cls, text];
+        }
         function send(path, form) {
             st.className = "muted";
             st.textContent = form ? "Uploading… (over Bluetooth this takes a while)" : "Working…";
             var h = {"X-CSRF-Token": token()};
             path += (path.indexOf("?") >= 0 ? "&" : "?") + "quiet=1";
             return fetch(K + path, {method: "POST", body: form || "", headers: h, credentials: "same-origin"}).then(answer).then(function (msg) {
-                st.className = "text-success";
-                st.textContent = msg;
-                setTimeout(function () { self.refreshQuiet(); }, 1500);
-            }).catch(function (e) { st.className = "text-error"; st.textContent = e.message; });
+                show("text-success", msg);
+                setTimeout(function () { self.refreshQuiet(sec.id); }, 1500);
+            }).catch(function (e) { show("text-error", e.message); });
         }
         var up = el("button", {"class": "btn btn-small", onclick: function () {
             if (!file.files.length) { st.textContent = "Pick a file first"; return; }
@@ -301,27 +323,28 @@
     };
 
     // firmware: the plugin downloads the release (or takes a .bin) and sends it to the KNOMI
+    // the plugin's status (also polled by the settings tab): shows in the firmware field drawn last
+    KnomiDevice.prototype.fwStatus = function (r) {
+        var v = this.fwView;
+        if (!v || !r) return;
+        v.news.textContent = r.fw_new ? "New release: " + r.fw_new : (r.fw_latest ? "Up to date (latest is " + r.fw_latest + ")" : "");
+        v.news.className = r.fw_new ? "label label-warning" : "muted";
+        var u = r.fw_update || {};
+        if (!u.state || u.state === "idle") return;
+        v.st.className = u.state === "error" ? "text-error" : u.state === "done" ? "text-success" : "muted";
+        v.st.textContent = u.msg + (u.pct !== undefined && u.state === "sending" ? " " + u.pct + "%" : "");
+    };
+
     KnomiDevice.prototype.firmwareField = function (f) {
+        var self = this;
         var st = el("span", {"class": "muted", style: "font-size:12px"});
         var file = el("input", {type: "file", accept: ".bin", style: "max-width:220px"});
         var news = el("span", {"class": "muted"});
-        var timer = null;
-        function poll() {
-            OctoPrint.simpleApiGet("knomi").done(function (r) {
-                news.textContent = r.fw_new ? "New release: " + r.fw_new : (r.fw_latest ? "Up to date (latest is " + r.fw_latest + ")" : "");
-                news.className = r.fw_new ? "label label-warning" : "muted";
-                var u = r.fw_update || {};
-                var busy = u.state === "downloading" || u.state === "sending";
-                // keep following an install in progress (also after the tab was reopened), stop otherwise
-                if (busy && !timer) timer = setInterval(poll, 1500);
-                if (!busy && timer) { clearInterval(timer); timer = null; }
-                if (!u.state || u.state === "idle") return;
-                st.className = u.state === "error" ? "text-error" : u.state === "done" ? "text-success" : "muted";
-                st.textContent = u.msg + (u.pct !== undefined && u.state === "sending" ? " " + u.pct + "%" : "");
-            });
-        }
+        self.fwView = {st: st, news: news};
+        function poll() { OctoPrint.simpleApiGet("knomi").done(function (r) { self.fwStatus(r); }); }
         function started(p) {
-            p.done(function () { if (!timer) timer = setInterval(poll, 1500); poll(); })
+            // the settings tab polls fast while an install runs (knomi.js) and passes it on to fwStatus
+            p.done(function () { poll(); if (self.onFwStarted) self.onFwStarted(); })
              .fail(function (x) { st.className = "text-error"; st.textContent = (x.responseJSON && x.responseJSON.error) || "Couldn't start"; });
         }
         var gh = el("button", {"class": "btn btn-small btn-primary", onclick: function () {
