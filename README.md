@@ -39,10 +39,19 @@ Restart OctoPrint when asked. Then flash the OctoPrint build of the **[KNOMI fir
 
 1. **Pair.** Settings › KNOMI › Bluetooth: tick **Connect to the KNOMI over Bluetooth**, **Find KNOMI**, **Pair**, and type the 6-digit code the KNOMI shows. No `bluetoothctl` needed. If the Pi's Bluetooth is disabled (`dtoverlay=disable-bt`, common on Klipper setups using the GPIO UART), remove that line from `/boot/firmware/config.txt` and reboot first.
 2. **The KNOMI network** (optional, recommended). The Pi needs a WiFi interface that isn't on your own network:
-   - **Pi on Ethernet:** its built-in WiFi is free once it stops joining your WiFi. The plugin shows the `nmcli` command for that, with your network's name filled in. Run it over SSH while on Ethernet.
+   - **Pi on Ethernet:** its built-in WiFi is free once it stops joining your WiFi. Over SSH, while connected by Ethernet, with `YOUR-WIFI` replaced by your network's name (`nmcli connection show` lists it):
+     ```
+     sudo nmcli connection modify "YOUR-WIFI" connection.autoconnect no && sudo nmcli connection down "YOUR-WIFI"
+     ```
    - **Pi on WiFi:** add a USB WiFi adapter, or skip this and stay on Bluetooth only (pages and uploads are slower).
 
-   The first time, the plugin shows a one-time command that lets NetworkManager accept OctoPrint's user. Run it over SSH and the Pi joins by itself; **KNOMI network** then says *joined*. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
+   **Once, over SSH:** let OctoPrint's user set up the connection. Replace `pi` with the user OctoPrint runs as (`systemctl show -p User octoprint` shows it on OctoPi; the plugin also shows this command with your user filled in):
+
+   ```
+   echo 'polkit.addRule(function(a,s){if(s.user=="pi"&&["org.freedesktop.NetworkManager.settings.modify.system","org.freedesktop.NetworkManager.network-control"].indexOf(a.id)>=0)return polkit.Result.YES;});' | sudo tee /etc/polkit-1/rules.d/50-octoprint-knomi.rules
+   ```
+
+   It takes effect right away; the Pi then joins by itself and **KNOMI network** says *joined*. Undo with `sudo rm /etc/polkit-1/rules.d/50-octoprint-knomi.rules`. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
 
 Needs Raspberry Pi OS Bookworm or newer (NetworkManager) for the KNOMI network. Bluetooth works without it.
 
