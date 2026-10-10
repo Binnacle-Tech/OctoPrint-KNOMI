@@ -19,6 +19,12 @@ $(function () {
         self.bleDetail = ko.observable("");
         self.bleAddress = ko.observable("");
         self.bleConnected = ko.observable(false);
+        // the KNOMI's own WiFi network (OP58+)
+        self.linkKnown = ko.observable(false);
+        self.linkStateText = ko.observable("");
+        self.linkBadge = ko.observable("");
+        self.linkDetail = ko.observable("");
+        self.linkFix = ko.observable("");
         // pairing
         self.pairStatus = ko.observable("idle");
         self.pairMessage = ko.observable("");
@@ -73,6 +79,16 @@ $(function () {
             else if (r.ble_error) d = r.ble_error;
             else if (st === "not found") d = "no paired KNOMI found. Pair one below.";
             self.bleDetail(d);
+            // the KNOMI's own network
+            var l = r.link || {};
+            self.linkKnown(!!l.ssid);
+            var ln = {up: "joined", joining: "joining", waiting: "waiting", "needs permission": "needs permission",
+                      "no interface": "no WiFi interface", "no networkmanager": "unsupported", error: "error", off: "off"};
+            self.linkStateText(ln[l.state] || l.state || "");
+            self.linkBadge(l.state === "up" ? "label-success" : (l.state === "joining" || l.state === "waiting") ? "label-warning" :
+                           l.state === "off" ? "" : "label-important");
+            self.linkDetail(l.detail || "");
+            self.linkFix(l.fix || "");
             self.fwState = (r.fw_update || {}).state;
             if (self.device) self.device.fwStatus(r);
             // pairing

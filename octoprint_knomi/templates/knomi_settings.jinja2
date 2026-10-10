@@ -88,7 +88,28 @@
     </div>
   </div>
 
-  <div class="control-group" data-bind="visible: settings.settings.plugins.knomi.ble_enabled">
+  <!-- KNOMI firmware OP58+: it runs its own WiFi network and the Pi joins it (link_net.py) -->
+  <div class="control-group" data-bind="visible: linkKnown">
+    <label class="control-label">KNOMI network</label>
+    <div class="controls" style="padding-top:5px">
+      <span class="label" data-bind="css: linkBadge, text: linkStateText"></span>
+      <span data-bind="text: linkDetail"></span>
+      <div data-bind="visible: linkFix" style="margin-top:8px;max-width:640px">
+        <span class="help-block">Run this once on the Pi (over SSH), then it sets itself up:</span>
+        <pre style="white-space:pre-wrap;word-break:break-all;margin:4px 0" data-bind="text: linkFix"></pre>
+      </div>
+      <span class="help-block">The KNOMI's pages, animations and firmware updates go over this network; Bluetooth stays the control link.</span>
+    </div>
+  </div>
+  <div class="control-group" data-bind="visible: linkKnown">
+    <label class="control-label">WiFi interface</label>
+    <div class="controls">
+      <input type="text" class="input-small" placeholder="automatic" data-bind="value: settings.settings.plugins.knomi.link_iface">
+      <span class="help-block">Which of the Pi's WiFi interfaces joins the KNOMI's network. Automatic picks one that isn't on another network (the built-in one if the Pi is on Ethernet, or a USB adapter).</span>
+    </div>
+  </div>
+
+  <div class="control-group" data-bind="visible: settings.settings.plugins.knomi.ble_enabled() && !linkKnown()">
     <div class="controls">
       <button class="btn" data-bind="click: wifiOn, enable: bleConnected"><i class="fa fa-wifi"></i> Turn KNOMI WiFi on for 10 minutes</button>
       <span class="help-block" data-bind="visible: bleConnected">If the KNOMI switched its WiFi off while on Bluetooth, this brings it back.</span>

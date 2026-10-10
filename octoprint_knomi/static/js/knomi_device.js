@@ -18,8 +18,8 @@
     }
     function textOf(html) {
         var d = document.createElement("div");
-        d.innerHTML = html;
-        d.querySelectorAll("script,style,nav,head").forEach(function (e) { e.remove(); });
+        d.innerHTML = String(html).replace(/<\/(p|h\d|div|li|tr)>/gi, "$& ");   // keep words of separate blocks apart
+        d.querySelectorAll("script,style,nav,head,title,a[href^='javascript']").forEach(function (e) { e.remove(); });
         return (d.textContent || "").replace(/\s+/g, " ").trim();
     }
     // a KNOMI answer: {"ok","title","note"} JSON, plain text, or (older handlers, errors) a page

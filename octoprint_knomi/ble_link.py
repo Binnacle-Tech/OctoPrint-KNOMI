@@ -21,6 +21,7 @@ FILES_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000003"
 CMD_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000004"
 INFO_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000005"
 TUNNEL_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000006"   # the KNOMI's web pages over Bluetooth (OP41+)
+LINK_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000007"     # the KNOMI's own WiFi network for the Pi (OP58+, OctoPrint build)
 # OP43+ also carries the tunnel on FILES (writes flagged 0x80) and CMD (notifications starting 0x01), for
 # a Pi whose BlueZ still has the KNOMI's characteristics from before OP41 cached and can't see TUNNEL
 TUNNEL_FRAME = 509    # data bytes per frame (512-byte attribute, 3-byte header)
@@ -238,6 +239,12 @@ class BleLink:
                         pass
                     if self._halted():
                         return
+                    if client.services.get_characteristic(LINK_UUID):
+                        try:   # its network's name and password (encrypted read: only to a paired Pi)
+                            link = json.loads(bytes(await client.read_gatt_char(LINK_UUID)).decode("utf-8", "replace"))
+                            self._plugin.ble_link_offer(link)
+                        except Exception as e:
+                            self._logger.info("KNOMI BLE: couldn't read the KNOMI's network details: %s", e.__class__.__name__)
                     self._tun_char = None
                     if client.services.get_characteristic(TUNNEL_UUID):
                         await client.start_notify(TUNNEL_UUID, self._on_tunnel)

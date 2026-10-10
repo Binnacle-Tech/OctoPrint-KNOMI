@@ -23,6 +23,7 @@ import octoprint.plugin
 from octoprint.events import Events
 
 from .ble_link import BleLink
+from .link_net import LinkNet
 from .pairing import Pairer
 from . import layers
 
@@ -214,6 +215,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._pairer = None
         self._last_pushed = None
         self._ble = None
+        self._link = None        # the KNOMI's own WiFi network, which the Pi joins (link_net.py, OP58+)
         self._layer_map = None   # layers.LayerMap of the file being printed
         self._layer_job = 0      # which print a layer scan belongs to
         self._push_lock = threading.RLock()
@@ -480,7 +482,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def get_settings_defaults(self):
         return {"ble_enabled": False, "ble_address": "", "tool": "tool0",
-                "knomi_ip": ""}   # last WiFi address the KNOMI had (kept across restarts, for its pages)
+                "knomi_ip": "",    # last WiFi address the KNOMI had (kept across restarts, for its pages)
+                "link_iface": ""}  # WiFi interface for the KNOMI's own network ("" = a free one)
 
     def is_template_autoescaped(self):
         return True
@@ -494,10 +497,12 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         return {"js": ["js/knomi_device.js", "js/knomi.js", "js/coaster.js"]}
 
     def on_after_startup(self):
+        self._link = LinkNet(self._logger, self.get_plugin_data_folder(), lambda: self._settings.get(["link_iface"]) or "")
         self._ble = BleLink(self, self._logger)
         self._pairer = Pairer(self._logger, self._on_paired, self._on_pair_done)
         if self._settings.get_boolean(["ble_enabled"]):
             self._ble.start()
+            self._link.start()
         threading.Thread(target=self._fw_watch, daemon=True, name="knomi-fw-watch").start()
         # OctoPrint restarted mid-print: pick the layers up again
         try:
@@ -551,6 +556,17 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._fw_told = new
         self._set_message("KNOMI firmware {} is out. Update in Settings > KNOMI".format(new), fw_notice=True)
 
+    def ble_link_offer(self, link):
+        """The KNOMI's own network (name, password, address), read over the encrypted Bluetooth link."""
+        if self._link and isinstance(link, dict):
+            if self._settings.get(["knomi_ip"]):   # its old address on your WiFi: it isn't there any more
+                self._settings.set(["knomi_ip"], "")
+                self._settings.save()
+                self._knomi["ip"] = ""
+                self._ip_saved = ""
+            self._link.start()
+            self._link.offer(str(link.get("ssid") or ""), str(link.get("psk") or ""), str(link.get("ip") or "192.168.77.1"))
+
     def ble_info(self, fw):
         """The KNOMI's firmware version, read when Bluetooth connects."""
         self._fw_seen(fw)
@@ -558,6 +574,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
     def on_shutdown(self):
         if self._ble:
             self._ble.stop()
+        if self._link:
+            self._link.stop()
 
     def on_settings_save(self, data):
         old = (self._settings.get_boolean(["ble_enabled"]), self._settings.get(["ble_address"]))
@@ -567,6 +585,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._ble.stop()
             if new[0]:
                 self._ble.start()
+                self._link.start()
+        if self._link:
+            self._link.check_soon()   # (the WiFi interface setting may have changed)
 
     # ---- BLE link callbacks (called from the link thread) -------------------
 
@@ -873,7 +894,9 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
 
     def _knomi_fetch(self, method, target, ctype, body, progress=None):
         """(status, headers, body, "WiFi"/"Bluetooth") from the KNOMI."""
-        ip = self._knomi.get("ip") or self._settings.get(["knomi_ip"])
+        link = self._link is not None and self._link.is_up()
+        ip = self._link.ip() if link else (self._knomi.get("ip") or self._settings.get(["knomi_ip"]))
+        net = "KNOMI network" if link else "WiFi"
         now = time.time()
         tried = []
         if ip and now - self._wifi_failed > 30:
@@ -882,18 +905,20 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 r = requests.request(method, "http://{}{}".format(ip, target), data=body or None,
                                      headers={"Content-Type": ctype} if ctype else {},
                                      timeout=(2, 60 + len(body) / 50000.0), allow_redirects=False)
-                return r.status_code, list(r.headers.items()), r.content, "WiFi"
+                return r.status_code, list(r.headers.items()), r.content, net
             except requests.RequestException as e:
                 if method != "GET" and not isinstance(e, requests.ConnectTimeout):
                     # it may have got there (a firmware upload the KNOMI restarted after): sending it all again
                     # over Bluetooth would be a second copy, so report it instead
-                    raise IOError("WiFi ({}): {}".format(ip, e.__class__.__name__))
+                    raise IOError("{} ({}): {}".format(net, ip, e.__class__.__name__))
                 self._wifi_failed = now   # WiFi is probably off: Bluetooth for a while
-                tried.append("WiFi ({}): {}".format(ip, e.__class__.__name__))
+                if link:
+                    self._link.check_soon()
+                tried.append("{} ({}): {}".format(net, ip, e.__class__.__name__))
         elif not ip:
             tried.append("WiFi: the KNOMI's address isn't known yet")
         else:
-            tried.append("WiFi ({}): didn't answer a moment ago".format(ip))
+            tried.append("{} ({}): didn't answer a moment ago".format(net, ip))
         if not self._ble or not self._ble.tunnel_ready():
             if not self._ble or self._ble.state != "connected":
                 tried.append("Bluetooth: the link isn't connected")
@@ -951,6 +976,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                           ble_error=self._ble.last_error)
         if self._pairer:
             result["pair"] = self._pairer.state()
+        if self._link:
+            result["link"] = self._link.status()
         k = dict(self._knomi)
         k["seen_s"] = round(time.time() - k.pop("seen")) if self._knomi["seen"] else None
         result["knomi"] = k
