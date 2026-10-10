@@ -586,6 +586,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             if new[0]:
                 self._ble.start()
                 self._link.start()
+            elif self._link:
+                self._link.stop(down=True)   # Bluetooth off: off the KNOMI's network too
         if self._link:
             self._link.check_soon()   # (the WiFi interface setting may have changed)
 

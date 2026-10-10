@@ -19,8 +19,8 @@ LINK_IP = "192.168.77.1"
 CHECK_S = 30.0
 # what NetworkManager needs to allow the OctoPrint user (it runs as a service, with no desktop session to ask)
 NM_ACTIONS = ("org.freedesktop.NetworkManager.settings.modify.system",
-              "org.freedesktop.NetworkManager.network-control",
-              "org.freedesktop.NetworkManager.wifi.share.protected")
+              "org.freedesktop.NetworkManager.network-control")
+# (that lets OctoPrint's user change and switch the Pi's network connections, which is what joining needs)
 
 
 def permission_command(user=None):
@@ -43,31 +43,74 @@ def parse_devices(text):
     return out
 
 
-def pick_interface(devices, wanted=""):
+def parse_profiles(text):
+    """`nmcli -t -f NAME,TYPE,AUTOCONNECT,DEVICE connection show` -> [(name, autoconnect, active device)] for WiFi."""
+    out = []
+    for line in text.splitlines():
+        parts = [p.replace("\0", ":") for p in line.replace("\\:", "\0").split(":")]
+        if len(parts) >= 4 and parts[1] in ("802-11-wireless", "wifi"):
+            out.append((parts[0], parts[2] == "yes", parts[3] if parts[3] not in ("", "--") else ""))
+    return out
+
+
+def pick_interface(devices, wanted="", profiles=(), default_dev=""):
     """(interface, why-not). Prefers the one already on the KNOMI's network, then the configured one, then a free one.
-    A WiFi interface that's connected to another network is never taken (it may be how the Pi reaches your LAN)."""
+
+    Picking on its own it's careful: the Pi may reach your network over WiFi, and taking that interface would cut it
+    off. So it never takes an interface that has (or is getting) another connection, carries the default route, or
+    could be joined by one of the Pi's own saved WiFi networks; for those, name the interface in the settings."""
+    def busy(con):
+        return con not in ("", "--", CON_NAME)
     for dev, state, con in devices:
         if con == CON_NAME:
             return dev, ""
     if wanted:
         for dev, state, con in devices:
             if dev == wanted:
-                if state.startswith("connected") and con not in ("", "--", CON_NAME):
-                    return "", "{} is connected to {} (the Pi needs it for that)".format(dev, con)
+                if busy(con):
+                    return "", "{} is on {} (the Pi uses it for that)".format(dev, con)
                 return dev, ""
         return "", "there's no WiFi interface called {}".format(wanted)
-    busy = []
+    # the Pi's own saved WiFi networks that would connect by themselves and aren't connected anywhere yet
+    waiting = [n for n, auto, active in profiles if auto and not active and n != CON_NAME]
+    reasons = []
     for dev, state, con in devices:
-        if state.startswith("connected") and con not in ("", "--"):
-            busy.append("{} is on {}".format(dev, con))
-            continue
-        if state in ("unavailable", "unmanaged"):
-            busy.append("{} is {}".format(dev, state))
-            continue
-        return dev, ""
+        if busy(con):
+            reasons.append("{} is on {}".format(dev, con))
+        elif state in ("unavailable", "unmanaged"):
+            reasons.append("{} is {}".format(dev, state))
+        elif dev == default_dev:
+            reasons.append("{} is the Pi's way to the internet".format(dev))
+        elif waiting:
+            reasons.append("{} could join the Pi's saved network {}".format(dev, waiting[0]))
+        else:
+            return dev, ""
     if not devices:
         return "", "the Pi has no WiFi interface"
-    return "", "no free WiFi interface ({})".format("; ".join(busy))
+    return "", "no free WiFi interface ({})".format("; ".join(reasons))
+
+
+def default_route_dev():
+    try:
+        out = subprocess.run(["ip", "-4", "route", "show", "default"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return ""
+    parts = out.split()
+    return parts[parts.index("dev") + 1] if "dev" in parts[:-1] else ""
+
+
+def subnet_taken(ip, iface):
+    """Another interface already uses the KNOMI network's addresses (your LAN is 192.168.77.x): routing would break."""
+    prefix = ".".join(ip.split(".")[:3]) + "."
+    try:
+        out = subprocess.run(["ip", "-4", "-o", "addr", "show"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return ""
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) >= 4 and f[1] != iface and f[3].startswith(prefix):
+            return f[1]
+    return ""
 
 
 class LinkNet(object):
@@ -99,9 +142,19 @@ class LinkNet(object):
         self._thread = threading.Thread(target=self._run, daemon=True, name="knomi-link-net")
         self._thread.start()
 
-    def stop(self):
+    def stop(self, down=False):
+        """down: also leave the KNOMI's network (Bluetooth turned off in the settings)."""
         self._stop = True
         self._wake.set()
+        t, self._thread = self._thread, None
+        if t:
+            t.join(timeout=5)
+        self.state, self.detail = "off", ""
+        if down and shutil.which("nmcli"):
+            try:
+                self._deactivate()
+            except Exception:
+                pass
 
     def offer(self, ssid, psk, ip=LINK_IP):
         """The KNOMI's network details, read over Bluetooth."""
@@ -176,12 +229,25 @@ class LinkNet(object):
         r = self._nmcli("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device")
         if r.returncode != 0:
             return self._fail(r, "listing interfaces")
-        iface, why = pick_interface(parse_devices(r.stdout), (self._iface_setting() or "").strip())
+        devices = parse_devices(r.stdout)
+        profiles = parse_profiles(self._nmcli("-t", "-f", "NAME,TYPE,AUTOCONNECT,DEVICE", "connection", "show").stdout)
+        iface, why = pick_interface(devices, (self._iface_setting() or "").strip(), profiles, default_route_dev())
         if not iface:
             self.state, self.iface = "no interface", ""
+            home = [n for n, auto, active in profiles if n != CON_NAME and (auto or active)]
             self.detail = why + ". Put the Pi on Ethernet (frees its built-in WiFi) or add a USB WiFi adapter."
+            if home:
+                # on Ethernet now, but its WiFi still joins (or would join) your network: that has to stop first
+                self.detail += (" If the Pi is on Ethernet already, stop its WiFi joining {n}: "
+                                "sudo nmcli connection modify \"{n}\" connection.autoconnect no && sudo nmcli connection down \"{n}\""
+                                .format(n=home[0]))
             return
         self.iface = iface
+        clash = subnet_taken(ip.split(":")[0], iface)
+        if clash:
+            self.state = "error"
+            self.detail = "{} already uses {}.x addresses, the same as the KNOMI's network".format(clash, ".".join(ip.split(".")[:3]))
+            return
 
         tag = self._secret_tag(ssid, psk)
         try:
@@ -195,7 +261,9 @@ class LinkNet(object):
                     "802-11-wireless.mode", "infrastructure", "802-11-wireless.powersave", "2",
                     "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk,
                     "ipv4.method", "auto", "ipv4.never-default", "yes", "ipv4.ignore-auto-dns", "yes",
-                    "ipv6.method", "disabled", "connection.autoconnect", "yes"]
+                    "ipv6.method", "disabled",
+                    # never by itself: this worker brings it up, on the interface it checked is free
+                    "connection.autoconnect", "no", "connection.autoconnect-priority", "-100"]
         # (the password is an argument for the moment nmcli runs: NetworkManager has no other way in for it)
         if not exists:
             self.state, self.detail = "joining", "setting up {} on {}".format(ssid, iface)

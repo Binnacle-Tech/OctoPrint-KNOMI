@@ -22,6 +22,7 @@ CMD_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000004"
 INFO_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000005"
 TUNNEL_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000006"   # the KNOMI's web pages over Bluetooth (OP41+)
 LINK_UUID = "4b4e4f4d-4900-4c69-6e6b-000000000007"     # the KNOMI's own WiFi network for the Pi (OP58+, OctoPrint build)
+LINK_REREAD_S = 300.0
 # OP43+ also carries the tunnel on FILES (writes flagged 0x80) and CMD (notifications starting 0x01), for
 # a Pi whose BlueZ still has the KNOMI's characteristics from before OP41 cached and can't see TUNNEL
 TUNNEL_FRAME = 509    # data bytes per frame (512-byte attribute, 3-byte header)
@@ -175,6 +176,13 @@ class BleLink:
             self._logger.info("KNOMI BLE: not advertising, using the paired KNOMI at %s", address)
         return address
 
+    async def _read_link(self, client):
+        try:   # the KNOMI's network name and password (encrypted read: only to a paired Pi); never logged
+            link = json.loads(bytes(await client.read_gatt_char(LINK_UUID)).decode("utf-8", "replace"))
+            self._plugin.ble_link_offer(link)
+        except Exception as e:
+            self._logger.info("KNOMI BLE: couldn't read the KNOMI's network details: %s", e.__class__.__name__)
+
     async def _send_files(self, client):
         for frame in encode_files(self._plugin.ble_file_list()):
             await client.write_gatt_char(FILES_UUID, frame, response=True)
@@ -239,12 +247,9 @@ class BleLink:
                         pass
                     if self._halted():
                         return
-                    if client.services.get_characteristic(LINK_UUID):
-                        try:   # its network's name and password (encrypted read: only to a paired Pi)
-                            link = json.loads(bytes(await client.read_gatt_char(LINK_UUID)).decode("utf-8", "replace"))
-                            self._plugin.ble_link_offer(link)
-                        except Exception as e:
-                            self._logger.info("KNOMI BLE: couldn't read the KNOMI's network details: %s", e.__class__.__name__)
+                    has_link = bool(client.services.get_characteristic(LINK_UUID))
+                    if has_link:
+                        await self._read_link(client)
                     self._tun_char = None
                     if client.services.get_characteristic(TUNNEL_UUID):
                         await client.start_notify(TUNNEL_UUID, self._on_tunnel)
@@ -272,6 +277,7 @@ class BleLink:
                     self._logger.info("KNOMI BLE connected to %s", address)
                     self._plugin.ble_remember_address(address)
                     last, last_t = None, 0.0
+                    link_read_t = time.monotonic()
                     while not self._halted() and not gone.is_set():
                         if self._refresh_at and time.monotonic() > self._refresh_at:
                             self._refresh_at = 0
@@ -280,6 +286,9 @@ class BleLink:
                         if self._files_dirty:
                             self._files_dirty = False
                             await self._send_files(client)
+                        if has_link and time.monotonic() - link_read_t > LINK_REREAD_S:
+                            link_read_t = time.monotonic()   # its network may have a new password ("forget" on the KNOMI)
+                            await self._read_link(client)
                         wifi = self._wifi_request
                         self._wifi_request = False
                         st = self._plugin.ble_status(wifi=wifi)
