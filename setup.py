@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="OctoPrint-KNOMI",
-    version="0.13.6",
+    version="0.14.0",
     description="Companion plugin for the KNOMI OctoPrint firmware: status over Bluetooth, the KNOMI's own WiFi network for the Pi, its settings in OctoPrint",
     author="Binnacle-Tech",
     url="https://github.com/Binnacle-Tech/OctoPrint-KNOMI",
