@@ -1100,7 +1100,7 @@ def handle_knomi_command(plugin, path):
 
 
 __plugin_name__ = "KNOMI"
-__plugin_description__ = "Status, animations and an optional Bluetooth link for the KNOMI display (OctoPrint edition firmware)"
+__plugin_description__ = "Drives the BTT KNOMI display from OctoPrint over Bluetooth and the KNOMI's own WiFi network (KNOMI for OctoPrint firmware)"
 __plugin_license__ = "AGPLv3"
 __plugin_url__ = "https://github.com/Binnacle-Tech/OctoPrint-KNOMI"
 __plugin_pythoncompat__ = ">=3,<4"

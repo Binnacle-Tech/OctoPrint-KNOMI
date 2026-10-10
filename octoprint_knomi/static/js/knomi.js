@@ -53,7 +53,7 @@ $(function () {
             var k = r.knomi || {};
             if (k.seen_s === null || k.seen_s === undefined) {
                 self.knomiStateText("not seen yet"); self.knomiBadge("");
-                self.knomiDetail("The KNOMI hasn't checked in since OctoPrint started. Set its backend to OctoPrint, or pair it over Bluetooth below.");
+                self.knomiDetail("The KNOMI hasn't checked in since OctoPrint started. Pair it over Bluetooth below.");
             } else if (k.seen_s < 60) {
                 self.knomiStateText("online"); self.knomiBadge("label-success");
                 self.knomiDetail("over " + k.via + (k.ip && k.via === "WiFi" ? " (" + k.ip + ")" : "") + " · " + ago(k.seen_s) + (k.fw ? " · " + k.fw : ""));
