@@ -228,6 +228,8 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._msg_fw = False           # it's the "new firmware" notice
         self._scan_cache = {}          # (path, mtime, size) -> LayerMap, the last few files printed
         self._fw_latest = ""           # newest KNOMI firmware release on GitHub, e.g. "OP46"
+        self._fw_latest_tag = ""       # ...its full tag, e.g. "v1.0.2-op46" (sent to the KNOMI, which isn't online)
+        self._fw_ended = 0.0           # when the last firmware install finished (the KNOMI shows how it went)
         self._fw_told = ""             # the release Coaster already announced
 
     # ---- helpers ---------------------------------------------------------
@@ -521,9 +523,11 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         while True:
             if time.time() - last_check > 6 * 3600:
                 try:
-                    m = re.search(r"op(\d+)", latest_release_tag(self.FW_REPO), re.I)
+                    tag = latest_release_tag(self.FW_REPO)
+                    m = re.search(r"op(\d+)", tag, re.I)
                     if m:
                         self._fw_latest = "OP" + m.group(1)
+                        self._fw_latest_tag = tag
                     last_check = time.time()
                 except Exception as e:
                     self._logger.debug("KNOMI: couldn't check for new firmware: %s", e)
@@ -614,6 +618,13 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                                   wifi, self._time_progress())
         if self.coaster_watched():
             status["cw"] = 1
+        # the KNOMI isn't on the internet: what's out, and how an install it asked for is going
+        if self._fw_latest_tag:
+            status["fl"] = self._fw_latest_tag
+        fw = dict(self._fw)
+        st = fw.get("state")
+        if st in ("downloading", "sending") or (st in ("done", "error") and time.time() - self._fw_ended < 60):
+            status["fu"] = [st, int(fw.get("pct") or 0), (fw.get("msg") or "")[:60]]
         return status
 
     def ble_file_list(self):
@@ -777,7 +788,12 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             if self._fw.get("state") in ("downloading", "sending"):
                 return False
             self._fw = {"state": "downloading", "msg": "Getting the firmware"}
-        threading.Thread(target=self._fw_run, args=(get_image,), daemon=True, name="knomi-fw").start()
+        def run():
+            try:
+                self._fw_run(get_image)
+            finally:
+                self._fw_ended = time.time()
+        threading.Thread(target=run, daemon=True, name="knomi-fw").start()
         return True
 
     def _fw_download(self, repo, asset):
@@ -1070,6 +1086,17 @@ def handle_knomi_command(plugin, path):
             plugin.coaster_update(json.loads(path[len("/coaster?"):]))
         except (ValueError, TypeError):
             pass
+        return
+    if path.startswith("/knomi/fw_install?"):
+        # the KNOMI's own "install the latest release" (it isn't on the internet): fetch it here and send it over
+        from urllib.parse import parse_qs
+        asset = (parse_qs(path.split("?", 1)[1]).get("asset") or [""])[0]
+        if re.match(r"^knomiv[12]-(octoprint|moonraker)-firmware\.bin$", asset):
+            plugin._logger.info("KNOMI asked for the latest firmware (%s)", asset)
+            if not plugin._fw_start(lambda: plugin._fw_download(plugin.FW_REPO, asset)):
+                plugin._logger.info("KNOMI firmware: an install is already running")
+        else:
+            plugin._logger.info("KNOMI asked for firmware with an odd file name: %r", asset[:60])
         return
     if path.startswith(GCODE_PREFIX):
         printer.commands(path[len(GCODE_PREFIX):])
