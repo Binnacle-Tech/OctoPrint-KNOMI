@@ -29,7 +29,9 @@ def permission_command(user=None):
     actions = ",".join('"{}"'.format(a) for a in NM_ACTIONS)
     rule = ('polkit.addRule(function(a,s){{if(s.user=="{u}"&&[{acts}].indexOf(a.id)>=0)return polkit.Result.YES;}});'
             .format(u=user, acts=actions))
-    return "echo '{}' | sudo tee /etc/polkit-1/rules.d/50-octoprint-knomi.rules".format(rule)
+    # named to sort first: rules run in filename order and the first answer wins, and Raspberry Pi OS ships one
+    # that said no to changing system connections on a Pi 5 (so a rule named 50-… was never asked)
+    return "echo '{}' | sudo tee /etc/polkit-1/rules.d/00-octoprint-knomi.rules".format(rule)
 
 
 def parse_devices(text):

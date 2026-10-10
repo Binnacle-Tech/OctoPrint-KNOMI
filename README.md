@@ -48,10 +48,10 @@ Restart OctoPrint when asked. Then flash the OctoPrint build of the **[KNOMI fir
    **Once, over SSH:** let OctoPrint's user set up the connection. Replace `pi` with the user OctoPrint runs as (`systemctl show -p User octoprint` shows it on OctoPi; the plugin also shows this command with your user filled in):
 
    ```
-   echo 'polkit.addRule(function(a,s){if(s.user=="pi"&&["org.freedesktop.NetworkManager.settings.modify.system","org.freedesktop.NetworkManager.network-control"].indexOf(a.id)>=0)return polkit.Result.YES;});' | sudo tee /etc/polkit-1/rules.d/50-octoprint-knomi.rules
+   echo 'polkit.addRule(function(a,s){if(s.user=="pi"&&["org.freedesktop.NetworkManager.settings.modify.system","org.freedesktop.NetworkManager.network-control"].indexOf(a.id)>=0)return polkit.Result.YES;});' | sudo tee /etc/polkit-1/rules.d/00-octoprint-knomi.rules
    ```
 
-   It takes effect right away; the Pi then joins by itself and **KNOMI network** says *joined*. Undo with `sudo rm /etc/polkit-1/rules.d/50-octoprint-knomi.rules`. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
+   It takes effect right away; the Pi then joins by itself and **KNOMI network** says *joined*. Undo with `sudo rm /etc/polkit-1/rules.d/00-octoprint-knomi.rules`. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
 
 Needs Raspberry Pi OS Bookworm or newer (NetworkManager) for the KNOMI network. Bluetooth works without it.
 
@@ -73,7 +73,7 @@ Settings › KNOMI › **Update the KNOMI** updates the KNOMI's firmware: from G
 
 **Does the KNOMI need to be on my WiFi?** No. Since firmware OP58 it isn't: Bluetooth is the control link, and its own network carries pages and uploads.
 
-**What does the permission command do?** It adds a polkit rule letting OctoPrint's user ask NetworkManager to set up and switch connections, which joining the KNOMI's network needs. Delete `/etc/polkit-1/rules.d/50-octoprint-knomi.rules` to take it back.
+**What does the permission command do?** It adds a polkit rule letting OctoPrint's user ask NetworkManager to set up and switch connections, which joining the KNOMI's network needs. Delete `/etc/polkit-1/rules.d/00-octoprint-knomi.rules` to take it back.
 
 **Does it work with OctoKlipper?** Yes, that's the tested setup: OctoPrint + OctoKlipper on a Raspberry Pi 5.
 
