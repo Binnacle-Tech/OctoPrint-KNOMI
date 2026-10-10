@@ -130,6 +130,7 @@ class LinkNet(object):
         self._thread = None
         self._stop = False
         self._up_since = 0.0
+        self._stale_addr = ""      # BlueZ keeps an old list of the KNOMI's characteristics (no network details)
 
     # ---- from the plugin ----------------------------------------------------
 
@@ -167,6 +168,9 @@ class LinkNet(object):
             self._logger.info("KNOMI network: the KNOMI offers %s", ssid)
             self._wake.set()
 
+    def note_stale_cache(self, address):
+        self._stale_addr = address or ""
+
     def is_up(self):
         return self.state == "up"
 
@@ -181,6 +185,11 @@ class LinkNet(object):
         d = {"state": self.state, "detail": self.detail, "iface": self.iface, "ssid": self.ssid}
         if self.state == "needs permission":
             d["fix"] = permission_command()
+        elif self.state == "waiting" and self._stale_addr:
+            d["detail"] = ("the Pi's Bluetooth still has the KNOMI's list from before its update, without the network "
+                           "details. Clear it once (the Pi re-reads it when it reconnects):")
+            d["fix"] = ("sudo sh -c 'rm -v /var/lib/bluetooth/*/cache/{}' && sudo systemctl restart bluetooth"
+                        .format(self._stale_addr.upper()))
         return d
 
     # ---- worker -----------------------------------------------------------
@@ -215,10 +224,28 @@ class LinkNet(object):
     def _tag_path(self):
         return os.path.join(self._data_folder, "link.tag")
 
+    def _permitted(self):
+        """True/False from NetworkManager's answer for OctoPrint's user, None if it couldn't be asked."""
+        r = self._nmcli("-t", "-f", "PERMISSION,VALUE", "general", "permissions")
+        if r.returncode != 0:
+            return None
+        got = dict(l.split(":", 1) for l in r.stdout.splitlines() if ":" in l)
+        return all(got.get(a) == "yes" for a in NM_ACTIONS)
+
     def _ensure(self):
         with self._lock:
             want = self._want
         if not want:
+            # nothing to join yet, but say now what will be needed (so it can be done before the KNOMI's details come)
+            if not shutil.which("nmcli"):
+                self.state = "no networkmanager"
+                self.detail = "the KNOMI network needs NetworkManager (Raspberry Pi OS Bookworm and newer); Bluetooth works without it"
+            elif self._permitted() is False:
+                self.state = "needs permission"
+                self.detail = "NetworkManager won't let OctoPrint's user set up the KNOMI's network yet. Run the command below once on the Pi."
+            else:
+                self.state = "waiting"
+                self.detail = "for the KNOMI's network details (they come over Bluetooth from firmware OP58)"
             return
         ssid, psk, ip = want
         self.ssid = ssid

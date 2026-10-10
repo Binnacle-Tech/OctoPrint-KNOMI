@@ -567,6 +567,11 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
             self._link.start()
             self._link.offer(str(link.get("ssid") or ""), str(link.get("psk") or ""), str(link.get("ip") or "192.168.77.1"))
 
+    def ble_link_missing(self, address):
+        """BlueZ still lists the KNOMI's old characteristics after reconnecting (address), or "" when that's fine."""
+        if self._link:
+            self._link.note_stale_cache(address)
+
     def ble_info(self, fw):
         """The KNOMI's firmware version, read when Bluetooth connects."""
         self._fw_seen(fw)

@@ -81,7 +81,7 @@ $(function () {
             self.bleDetail(d);
             // the KNOMI's own network
             var l = r.link || {};
-            self.linkKnown(!!l.ssid);
+            self.linkKnown(!!l.state && l.state !== "off");
             var ln = {up: "joined", joining: "joining", waiting: "waiting", "needs permission": "needs permission",
                       "no interface": "no WiFi interface", "no networkmanager": "unsupported", error: "error", off: "off"};
             self.linkStateText(ln[l.state] || l.state || "");

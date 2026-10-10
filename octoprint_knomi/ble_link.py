@@ -263,9 +263,14 @@ class BleLink:
                         self._tun_lock = asyncio.Lock()
                         self._aloop = loop
                         self._client = client
-                    if self._tun_char == TUNNEL_UUID and fw > 0:
+                    # OP58+ offers its network details; not seeing them means BlueZ still has the old list
+                    stale_link = fw >= 58 and not has_link
+                    if self._tun_char == TUNNEL_UUID and fw > 0 and not stale_link:
                         self._tun_refreshed = 0   # a healthy link: a later firmware update gets its refreshes again
-                    if (not self._tun_char or fw == 0) and self._tun_refreshed < 4:
+                    if stale_link:
+                        self._logger.info("KNOMI BLE: the KNOMI's network details aren't in BlueZ's list yet (old cache)")
+                    self._plugin.ble_link_missing(address if stale_link and self._tun_refreshed >= 4 else "")
+                    if (not self._tun_char or fw == 0 or stale_link) and self._tun_refreshed < 4:
                         # BlueZ keeps a paired device's list of characteristics; after a firmware update that
                         # added one it can take a reconnect (or a few) before BlueZ looks again
                         self._tun_refreshed += 1
