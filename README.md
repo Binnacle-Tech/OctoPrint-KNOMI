@@ -19,7 +19,7 @@
 - **Filament type for the KNOMI.** Read from the slicer's settings in the file (`filament_type`, the filament preset) or the file name, so Coaster can react to PLA, PETG, ABS, ASA, TPU, nylon or PC. Needs KNOMI firmware OP28 or newer.
 - **Current layer and Z for the KNOMI.** OctoPrint doesn't report layers, so the plugin reads the file being printed, finds where each layer starts (slicer layer comments, or Z moves followed by extrusion) and follows OctoPrint's file position, the same way the G-code viewer does. This drives the KNOMI's layer triggers, `{layer}` and `{z}`. Files printed from OctoPrint's own storage only. Needs KNOMI firmware OP20 or newer.
 - **Bluetooth LE link.** The plugin connects to the KNOMI directly, pushes status the moment it changes, sends the file list, and runs the KNOMI's touchscreen buttons inside OctoPrint. No API key, no polling.
-- **The KNOMI network** (KNOMI firmware OP58+). The KNOMI runs its own small WiFi network and the Pi joins it on a spare WiFi interface, using details it gets over the paired Bluetooth link. The KNOMI's pages, GIF uploads and firmware installs go over it, much faster than Bluetooth. The KNOMI never joins your WiFi.
+- **The KNOMI network** (KNOMI firmware OP58+). A small WiFi network just between the Pi and the KNOMI, on a spare WiFi interface of the Pi, set up from details the KNOMI hands over the paired Bluetooth link. From KNOMI firmware OP60 the Pi hosts it and the KNOMI joins (an ESP32 hosting a network starves its own Bluetooth); with OP58/59 the Pi joins the KNOMI's. The KNOMI's pages, GIF uploads and firmware installs go over it, much faster than Bluetooth. The KNOMI never joins your WiFi.
 - **The KNOMI's settings and pages in OctoPrint.** Every KNOMI setting, its print screen designer, animations, Coaster page and log, under Settings › KNOMI. Firmware updates too: the Pi downloads the release and sends it over.
 - No G28 or bed-mesh macro overrides are needed, so it avoids the "Macro G28 called recursively" and KAMP problems of the stock KNOMI macros.
 
@@ -48,16 +48,16 @@ Restart OctoPrint when asked. Then flash the OctoPrint build of the **[KNOMI fir
    **Once, over SSH:** let OctoPrint's user set up the connection. Replace `pi` with the user OctoPrint runs as (`systemctl show -p User octoprint` shows it on OctoPi; the plugin also shows this command with your user filled in):
 
    ```
-   echo 'polkit.addRule(function(a,s){if(s.user=="pi"&&["org.freedesktop.NetworkManager.settings.modify.system","org.freedesktop.NetworkManager.network-control"].indexOf(a.id)>=0)return polkit.Result.YES;});' | sudo tee /etc/polkit-1/rules.d/00-octoprint-knomi.rules
+   echo 'polkit.addRule(function(a,s){if(s.user=="pi"&&["org.freedesktop.NetworkManager.settings.modify.system","org.freedesktop.NetworkManager.network-control","org.freedesktop.NetworkManager.wifi.share.protected"].indexOf(a.id)>=0)return polkit.Result.YES;});' | sudo tee /etc/polkit-1/rules.d/00-octoprint-knomi.rules
    ```
 
-   It takes effect right away; the Pi then joins by itself and **KNOMI network** says *joined*. Undo with `sudo rm /etc/polkit-1/rules.d/00-octoprint-knomi.rules`. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
+   It takes effect right away; the Pi then sets it up by itself and **KNOMI network** says *up*. (Updating from 0.15 or older: run it again, hosting the network needs one more permission.) Undo with `sudo rm /etc/polkit-1/rules.d/00-octoprint-knomi.rules`. The plugin never takes a WiFi interface that's on, or could rejoin, another network, or that carries the Pi's internet. Pick one by hand under **WiFi interface** if you want to.
 
 Needs Raspberry Pi OS Bookworm or newer (NetworkManager) for the KNOMI network. Bluetooth works without it.
 
 ### Upgrading to KNOMI firmware OP58
 
-OP58 moves the KNOMI off your WiFi. Update this plugin first (0.14.0+), make sure Bluetooth says *connected*, then install OP58 from Settings › KNOMI. The plugin picks up the KNOMI's new network over Bluetooth. If anything goes wrong, the KNOMI shows a QR code after 2 minutes without Bluetooth: join its network from a phone and open `http://192.168.77.1/`. More in the firmware's [upgrade notes](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#upgrading-to-op58).
+OP58 moves the KNOMI off your WiFi. Update this plugin first (0.14.0+), make sure Bluetooth says *connected*, then install OP58 from Settings › KNOMI. The plugin picks up the KNOMI's new network over Bluetooth. If anything goes wrong, the KNOMI shows a QR code after 2 minutes without Bluetooth: join its network from a phone and open `http://192.168.77.1/` (`http://192.168.78.1/` from OP60). More in the firmware's [upgrade notes](https://github.com/Binnacle-Tech/KNOMI/blob/octoprint/OCTOPRINT.md#upgrading-to-op58).
 
 ## Updates
 
@@ -73,7 +73,7 @@ Settings › KNOMI › **Update the KNOMI** updates the KNOMI's firmware: from G
 
 **Does the KNOMI need to be on my WiFi?** No. Since firmware OP58 it isn't: Bluetooth is the control link, and its own network carries pages and uploads.
 
-**What does the permission command do?** It adds a polkit rule letting OctoPrint's user ask NetworkManager to set up and switch connections, which joining the KNOMI's network needs. Delete `/etc/polkit-1/rules.d/00-octoprint-knomi.rules` to take it back.
+**What does the permission command do?** It adds a polkit rule letting OctoPrint's user ask NetworkManager to set up and switch connections, and host a WPA2 network on one, which the KNOMI network needs. Delete `/etc/polkit-1/rules.d/00-octoprint-knomi.rules` to take it back.
 
 **Does it work with OctoKlipper?** Yes, that's the tested setup: OctoPrint + OctoKlipper on a Raspberry Pi 5.
 

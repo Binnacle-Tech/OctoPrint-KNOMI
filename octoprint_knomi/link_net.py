@@ -1,10 +1,14 @@
 # coding=utf-8
-"""The KNOMI's own WiFi network (KNOMI firmware OP58+, OctoPrint build).
+"""The KNOMI network: a small WiFi network just between the Pi and the KNOMI (KNOMI firmware OP58+, OctoPrint build).
 
-The KNOMI doesn't join your WiFi any more: it runs a small network of its own and the Pi joins it on a spare WiFi
-interface (the built-in one when the Pi is on Ethernet, or a USB adapter). The KNOMI hands over the name and password
-over the paired, encrypted Bluetooth link; this sets up a NetworkManager connection for it, marked so it's never the
-Pi's way to the internet, and keeps it up. The password is never logged.
+The KNOMI doesn't join your WiFi. It makes up a network name and password and hands them over the paired, encrypted
+Bluetooth link; this sets up a NetworkManager connection for it on a spare WiFi interface of the Pi (the built-in one
+when the Pi is on Ethernet, or a USB adapter), marked so it's never the Pi's way to the internet, and keeps it up.
+The password is never logged.
+
+Who hosts it depends on the firmware: from OP60 the Pi hosts it (an access point at 192.168.77.1) and the KNOMI joins
+as 192.168.77.2. OP58/59 hosted it on the KNOMI and the Pi joined, but an ESP32 hosting a network starves its own
+Bluetooth once anything's on it, so that's only kept for those versions.
 """
 import getpass
 import hashlib
@@ -15,12 +19,14 @@ import threading
 import time
 
 CON_NAME = "knomi-link"
-LINK_IP = "192.168.77.1"
+LINK_IP = "192.168.77.1"      # OP58/59: the KNOMI hosting
+PI_IP = "192.168.77.1"        # OP60+: the Pi hosting, the KNOMI at 192.168.77.2
 CHECK_S = 30.0
 # what NetworkManager needs to allow the OctoPrint user (it runs as a service, with no desktop session to ask)
 NM_ACTIONS = ("org.freedesktop.NetworkManager.settings.modify.system",
-              "org.freedesktop.NetworkManager.network-control")
-# (that lets OctoPrint's user change and switch the Pi's network connections, which is what joining needs)
+              "org.freedesktop.NetworkManager.network-control",
+              "org.freedesktop.NetworkManager.wifi.share.protected")
+# (that lets OctoPrint's user change and switch the Pi's network connections, and run a WPA2 access point on one)
 
 
 def permission_command(user=None):
@@ -126,7 +132,8 @@ class LinkNet(object):
         self.detail = ""
         self.iface = ""
         self.ssid = ""
-        self._want = None          # (ssid, psk, ip) from the KNOMI
+        self._want = None          # (ssid, psk, ip, host, pi_ip, channel) from the KNOMI
+        self.host = ""             # who hosts the network: "pi" or "knomi"
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._thread = None
@@ -159,15 +166,21 @@ class LinkNet(object):
             except Exception:
                 pass
 
-    def offer(self, ssid, psk, ip=LINK_IP):
-        """The KNOMI's network details, read over Bluetooth."""
+    def offer(self, ssid, psk, ip=LINK_IP, host="knomi", pi_ip=PI_IP, channel=6):
+        """The KNOMI's network details, read over Bluetooth. host "pi": the Pi hosts it at pi_ip, the KNOMI is ip."""
         if not ssid or not psk or len(psk) < 8:
             return
+        host = "pi" if host == "pi" else "knomi"
+        try:
+            channel = int(channel) if 1 <= int(channel) <= 13 else 6
+        except (TypeError, ValueError):
+            channel = 6
+        want = (ssid, psk, ip, host, pi_ip or PI_IP, channel)
         with self._lock:
-            changed = self._want != (ssid, psk, ip)
-            self._want = (ssid, psk, ip)
+            changed = self._want != want
+            self._want = want
         if changed:
-            self._logger.info("KNOMI network: the KNOMI offers %s", ssid)
+            self._logger.info("KNOMI network: %s (%s)", ssid, "the Pi hosts it" if host == "pi" else "the KNOMI hosts it")
             self._wake.set()
 
     def note_stale_cache(self, address):
@@ -184,7 +197,7 @@ class LinkNet(object):
         self._wake.set()
 
     def status(self):
-        d = {"state": self.state, "detail": self.detail, "iface": self.iface, "ssid": self.ssid}
+        d = {"state": self.state, "detail": self.detail, "iface": self.iface, "ssid": self.ssid, "host": self.host}
         if self.state == "needs permission":
             d["fix"] = permission_command()
         elif self.state == "waiting" and self._stale_addr:
@@ -219,9 +232,9 @@ class LinkNet(object):
             self.state, self.detail = "error", "{}: {}".format(what, err[:200] or "failed")
         self._logger.info("KNOMI network: %s", self.detail)
 
-    def _secret_tag(self, ssid, psk):
+    def _secret_tag(self, ssid, psk, extra=""):
         # remembers which details the saved connection has, without keeping the password itself
-        return hashlib.sha256((ssid + "\0" + psk).encode("utf-8")).hexdigest()
+        return hashlib.sha256((ssid + "\0" + psk + "\0" + extra).encode("utf-8")).hexdigest()
 
     def _tag_path(self):
         return os.path.join(self._data_folder, "link.tag")
@@ -249,8 +262,8 @@ class LinkNet(object):
                 self.state = "waiting"
                 self.detail = "for the KNOMI's network details (they come over Bluetooth from firmware OP58)"
             return
-        ssid, psk, ip = want
-        self.ssid = ssid
+        ssid, psk, ip, host, pi_ip, channel = want
+        self.ssid, self.host = ssid, host
         if not shutil.which("nmcli"):
             self.state = "no networkmanager"
             self.detail = "this needs NetworkManager (Raspberry Pi OS Bookworm and newer have it)"
@@ -272,13 +285,23 @@ class LinkNet(object):
                                 .format(n=home[0]))
             return
         self.iface = iface
-        clash = subnet_taken(ip.split(":")[0], iface)
+        clash = subnet_taken((pi_ip if host == "pi" else ip).split(":")[0], iface)
         if clash:
             self.state = "error"
             self.detail = "{} already uses {}.x addresses, the same as the KNOMI's network".format(clash, ".".join(ip.split(".")[:3]))
             return
 
-        tag = self._secret_tag(ssid, psk)
+        if host == "pi":
+            # an access point: WPA2 (AES) only, fixed address, nothing handed out (the KNOMI has its own fixed one)
+            mode = ["802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "802-11-wireless.channel", str(channel),
+                    "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp", "wifi-sec.pmf", "1",
+                    "ipv4.method", "manual", "ipv4.addresses", pi_ip + "/24"]
+        else:
+            # joining the KNOMI's (and undoing the access point settings if it was one before)
+            mode = ["802-11-wireless.mode", "infrastructure", "802-11-wireless.band", "", "802-11-wireless.channel", "0",
+                    "wifi-sec.proto", "", "wifi-sec.pairwise", "", "wifi-sec.group", "", "wifi-sec.pmf", "0",
+                    "ipv4.addresses", "", "ipv4.method", "auto"]
+        tag = self._secret_tag(ssid, psk, "{}|{}|{}".format(host, pi_ip, channel))
         try:
             with open(self._tag_path()) as f:
                 saved = f.read().strip()
@@ -286,14 +309,15 @@ class LinkNet(object):
             saved = ""
         exists = self._nmcli("-t", "-f", "NAME", "connection", "show").stdout.splitlines()
         exists = CON_NAME in exists
-        settings = ["connection.interface-name", iface, "802-11-wireless.ssid", ssid,
-                    "802-11-wireless.mode", "infrastructure", "802-11-wireless.powersave", "2",
+        settings = ["connection.interface-name", iface, "802-11-wireless.ssid", ssid] + mode + [
+                    "802-11-wireless.powersave", "2",
                     "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk,
-                    "ipv4.method", "auto", "ipv4.never-default", "yes", "ipv4.ignore-auto-dns", "yes",
+                    "ipv4.never-default", "yes", "ipv4.ignore-auto-dns", "yes",
                     "ipv6.method", "disabled",
                     # never by itself: this worker brings it up, on the interface it checked is free
                     "connection.autoconnect", "no", "connection.autoconnect-priority", "-100"]
         # (the password is an argument for the moment nmcli runs: NetworkManager has no other way in for it)
+        doing = "hosting" if host == "pi" else "joining"
         if not exists:
             self.state, self.detail = "joining", "setting up {} on {}".format(ssid, iface)
             r = self._nmcli("connection", "add", "type", "wifi", "con-name", CON_NAME, "ifname", iface, "ssid", ssid, *settings)
@@ -314,15 +338,17 @@ class LinkNet(object):
             self._deactivate()   # new details: reconnect with them
 
         if not self._active():
-            self.state, self.detail = "joining", "{} on {}".format(ssid, iface)
+            self.state, self.detail = "joining", "{} {} on {}".format(doing, ssid, iface)
             r = self._nmcli("connection", "up", CON_NAME, "ifname", iface, timeout=45)
             if r.returncode != 0:
-                return self._fail(r, "joining " + ssid)
+                return self._fail(r, doing + " " + ssid)
         if self._reachable(ip):
             if self.state != "up":
-                self._logger.info("KNOMI network: up on %s, the KNOMI is at %s", iface, ip)
+                self._logger.info("KNOMI network: %s %s on %s, the KNOMI is at %s", doing, ssid, iface, ip)
                 self._up_since = time.time()
-            self.state, self.detail = "up", "on {} ({})".format(iface, ssid)
+            self.state, self.detail = "up", "{} {} on {}".format(doing, ssid, iface)
+        elif host == "pi":
+            self.state, self.detail = "joining", "hosting {} on {}, waiting for the KNOMI to join (it's {})".format(ssid, iface, ip)
         else:
             self.state, self.detail = "joining", "joined {} on {}, but the KNOMI doesn't answer at {} yet".format(ssid, iface, ip)
 

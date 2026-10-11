@@ -215,7 +215,7 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
         self._pairer = None
         self._last_pushed = None
         self._ble = None
-        self._link = None        # the KNOMI's own WiFi network, which the Pi joins (link_net.py, OP58+)
+        self._link = None        # the KNOMI network, between the Pi and the KNOMI (link_net.py, OP58+)
         self._layer_map = None   # layers.LayerMap of the file being printed
         self._layer_job = 0      # which print a layer scan belongs to
         self._push_lock = threading.RLock()
@@ -569,7 +569,10 @@ class KnomiPlugin(octoprint.plugin.SimpleApiPlugin,
                 self._knomi["ip"] = ""
                 self._ip_saved = ""
             self._link.start()
-            self._link.offer(str(link.get("ssid") or ""), str(link.get("psk") or ""), str(link.get("ip") or "192.168.77.1"))
+            host = str(link.get("host") or "knomi")   # OP60+: "pi" (the Pi hosts the network, the KNOMI joins)
+            self._link.offer(str(link.get("ssid") or ""), str(link.get("psk") or ""),
+                             str(link.get("ip") or ("192.168.77.2" if host == "pi" else "192.168.77.1")),
+                             host, str(link.get("pi") or "192.168.77.1"), link.get("ch") or 6)
 
     def ble_link_missing(self, address):
         """BlueZ still lists the KNOMI's old characteristics after reconnecting (address), or "" when that's fine."""
